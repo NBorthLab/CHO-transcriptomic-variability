@@ -1,0 +1,8 @@
+sample,dataset,fastq_1,fastq_2
+WT_REP1,WT,data/testdata/SRR6357070_1.fastq.gz,data/testdata/SRR6357070_2.fastq.gz
+WT_REP1,WT,data/testdata/SRR6357071_1.fastq.gz,data/testdata/SRR6357071_2.fastq.gz
+WT_REP2,WT,data/testdata/SRR6357072_1.fastq.gz,data/testdata/SRR6357072_2.fastq.gz
+RAP1_IAA_30M_REP1,RAP1,data/testdata/SRR6357076_1.fastq.gz,data/testdata/SRR6357076_2.fastq.gz
+RAP1_UNINDUCED_REP1,RAP1,data/testdata/SRR6357073_1.fastq.gz,
+RAP1_UNINDUCED_REP2,RAP1,data/testdata/SRR6357074_1.fastq.gz,
+RAP1_UNINDUCED_REP2,RAP1,data/testdata/SRR6357075_1.fastq.gz,

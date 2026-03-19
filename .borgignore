@@ -1,0 +1,11 @@
+- .git
++ .snakemake/log
+- .snakemake/*
+- data
++ results/analysis
++ results/R
++ results/counts
+- results
+- work
+- tmp
+- .quarto

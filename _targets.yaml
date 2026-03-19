@@ -1,0 +1,42 @@
+preprocessing:
+  store: results/R/preprocessing
+  script: workflows/02_preprocessing.R
+transformation:
+  store: results/R/transformation
+  script: workflows/03_transformation.R
+principal_components:
+  store: results/R/principal_components
+  script: workflows/04_principal_components.R
+loess_residuals:
+  store: results/R/loess_residuals
+  script: workflows/05_loess_residuals.R
+shannon_entropy:
+  store: results/R/shannon_entropy
+  script: workflows/06_shannon_entropy.R
+measures_comparison:
+  store: results/R/measures_comparison
+  script: workflows/07_measures_comparison.R
+gene_sets:
+  store: results/R/gene_sets
+  script: workflows/08_gene_sets.R
+functional_enrichment:
+  store: results/R/functional_enrichment
+  script: workflows/09_functional_enrichment.R
+chromatin_states:
+  store: results/R/chromatin_states
+  script: workflows/10_chromatin_states.R
+motifs:
+  store: results/R/motifs
+  script: workflows/11_motifs.R
+gene_features:
+  store: results/R/gene_features
+  script: workflows/12_gene_features.R
+gene_characteristics:
+  store: results/R/gene_characteristics
+  script: workflows/13_gene_characteristics.R
+metadata_loadings:
+  store: results/R/metadata_loadings
+  script: workflows/14_metadata_loadings.R
+versions:
+  store: results/R/versions
+  script: workflows/99_versions.R

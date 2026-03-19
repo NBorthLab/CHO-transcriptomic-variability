@@ -1,0 +1,367 @@
+---
+title: Functional Enrichment
+author: Markus Riedl
+date: "`r Sys.Date()`"
+toc: true
+number-sections: true
+format:
+  html:
+    embed-resources: true
+knitr:
+  opts_chunk:
+    collapse: true
+---
+
+# Setup
+
+
+```{r}
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(targets)
+  library(tidyplots)
+  library(ggpubr)
+  library(conflicted)
+  library(here)
+  library(clusterProfiler)
+  library(patchwork)
+})
+
+source(here("analysis/99_globals.R"))
+tar_source(here("R"))
+
+conflicts_prefer(
+  dplyr::select,
+  dplyr::filter,
+  dplyr::rename
+)
+```
+
+```{r}
+tar_load(first_pc, store = here("results/R/principal_components"))
+
+tar_load(go_gsea, store = here("results/R/functional_enrichment"))
+tar_load(kegg_gsea, store = here("results/R/functional_enrichment"))
+tar_load(go_slim_gsea, store = here("results/R/functional_enrichment"))
+tar_load(go_slim_gsea_df, store = here("results/R/functional_enrichment"))
+
+tar_load(secRecon_gsea, store = here("results/R/functional_enrichment"))
+```
+
+## Plotting functions
+
+```{r}
+plot_gsea <- function(x, legend) {
+  x %>%
+    tidyplot(x = x, y = runningScore, color = Description) %>%
+    add_data_points(
+      data = filter_rows(position == 1),
+      size = 0.2
+    ) %>%
+    adjust_size(50, 40) %>%
+    adjust_font(fontsize = 6) %>%
+    add_reference_lines(y = 0) %>%
+    adjust_x_axis_title("Variance Rank") %>%
+    adjust_y_axis_title("GSEA Running Score") %>%
+    adjust_legend_title(legend) %>%
+    # remove_legend() %>%
+    add(scale_x_reverse(
+      breaks = c(1, seq(2500, 10000, 2500))
+    )) %>%
+    adjust_legend_position("bottom") %>%
+    add(
+      guides(
+        color = guide_legend(
+          ncol = 2,
+          override.aes = list(size = 1)
+        )
+      )
+    ) %>%
+    adjust_theme_details(
+      legend.key.spacing.x = unit(0, "mm"),
+      legend.key.spacing.y = unit(0, "mm"),
+      legend.title.position = "top"
+    )
+}
+
+print_table <- function(df, desc) {
+  df %>%
+    mutate(color = "", .before = Description) %>%
+    mutate(var = ifelse(NES > 0, "high variability", "low variability")) %>%
+    mutate(log_p = -log10(p.adjust), .before = NES) %>%
+    select(-p.adjust) %>%
+    gt::gt(groupname_col = "var") %>%
+    gt::fmt_number(NES) %>%
+    gt::cols_hide(NES) %>%
+    # gt::fmt_scientific(p.adjust) %>%
+    gt::fmt_number(log_p) %>%
+    gt::data_color(
+      columns = Description,
+      target_columns = color,
+      method = "factor",
+      palette = colors_discrete_friendly
+    ) %>%
+    gt::cols_label(
+      # p.adjust = gt::md("adj. _p_"),
+      log_p = "-log(𝑝)",
+      # log_p = gt::md("-log(p)"),
+      Description = desc,
+      color = ""
+    ) %>%
+    gt::cols_width(
+      color ~ px(5),
+      Description ~ px(120)
+      # log_p ~ px(1)
+    ) %>%
+    gt::opt_table_font(size = 8) %>%
+    gt::opt_vertical_padding(0.3)
+}
+```
+
+
+# GO Slim
+
+## GSEA
+
+
+```{r}
+subset_terms <- c(
+  "cell adhesion", "mitotic cell cycle", "receptor ligand activity",
+  "endosome", "mitochondrion organization", "mRNA metabolic process"
+)
+
+goslim_gsea_subset <- go_slim_gsea_df %>%
+  mutate(N = seq_along(ID), .before = ID) %>%
+  filter(Description %in% subset_terms) %>%
+  arrange(desc(NES)) %>%
+  select(N, Description, p.adjust, NES)
+
+go_slim_gsea_data <- enrichplot:::get_gsdata(go_slim_gsea, goslim_gsea_subset$N)
+
+go_slim_gsea_plot <- go_slim_gsea_data %>%
+  mutate(
+    Description = factor(Description, levels = goslim_gsea_subset$Description)
+  ) %>%
+  plot_gsea("GO slim terms") %>%
+  remove_legend()
+
+go_slim_gsea_plot
+
+# test <- bind_cols(
+#   gsea_goslim_subset,
+#   tribble(
+#     ~x, ~y,
+#     1, 0.5,
+#     1, 0.4,
+#     1, 0.3,
+#     1, 0.2,
+#     1, -0.1,
+#     1, -0.2,
+#     1, -0.3,
+#   )
+# ) %>%
+#   tidyplot(x = x, y = y, color = Description) %>%
+#   add(
+#     geom_label(
+#       aes(label = Description),
+#       fill = NA, hjust = 0, size = 3,
+#       border.colour = NA
+#     )
+#   ) %>%
+#   adjust_x_axis(limits = c(0.8, 6)) %>%
+#   remove_legend() %>%
+#   remove_x_axis() %>%
+#   remove_y_axis()
+
+# gsea_goslim_plot - test
+```
+
+```{r}
+go_slim_gsea_table <- goslim_gsea_subset %>%
+  select(Description, p.adjust, NES) %>%
+  mutate(
+    Description = factor(Description, levels = goslim_gsea_subset$Description)
+  ) %>%
+  print_table("GO slim term")
+```
+
+## Clustering
+
+```{r, eval = FALSE}
+get_hamster_annotation()
+
+sem_data <- GOSemSim::godata(annot_db_Cg, ont = "BP")
+
+# test_gsea_simple <- clusterProfiler::simplify(test_gsea)
+
+gsea_termsim <- enrichplot::pairwise_termsim(go_gsea,
+  method = "Wang",
+  semData = sem_data
+)
+
+enrichplot::treeplot(gsea_termsim,
+  color = "NES"
+)
+```
+
+# secRecon
+
+## GSEA
+
+```{r}
+tar_load(secRecon, store = here("results/R/functional_enrichment/"))
+tar_load(secRecon_gsea, store = here("results/R/functional_enrichment/"))
+tar_load(secRecon_gsea_df, store = here("results/R/functional_enrichment/"))
+```
+
+```{r}
+subset_terms <- c(
+  "Exosome/secreted", "Endocytosis", "PERK pathway", "COPI", "Apoptosis",
+  "Protein folding"
+)
+
+secRecon_gsea_subset <- secRecon_gsea_df %>%
+  mutate(N = seq_along(ID), .before = ID) %>%
+  filter(Description %in% subset_terms) %>%
+  arrange(desc(NES)) %>%
+  select(N, Description, p.adjust, NES)
+
+secRecon_gsea_data <- enrichplot:::get_gsdata(
+  secRecon_gsea, secRecon_gsea_subset$N
+)
+
+secRecon_gsea_plot <- secRecon_gsea_data %>%
+  mutate(
+    Description = factor(Description, levels = secRecon_gsea_subset$Description)
+  ) %>%
+  plot_gsea("secRecon terms") %>%
+  remove_legend()
+
+secRecon_gsea_plot
+```
+
+```{r}
+secRecon_gsea_table <- secRecon_gsea_subset %>%
+  select(Description, p.adjust, NES) %>%
+  mutate(
+    Description = factor(Description, levels = secRecon_gsea_subset$Description)
+  ) %>%
+  print_table("secRecon term")
+```
+
+```{r}
+(secRecon_gsea_rug <- secRecon_gsea_data %>%
+  mutate(
+    Description = factor(Description, levels = secRecon_gsea_subset$Description)
+  ) %>%
+  {
+    print(head(., n = 100))
+    test <<- .
+    .
+  } %>%
+  tidyplot(x = x, y = ymin, color = Description) %>%
+  add(
+    geom_linerange(
+      aes(
+        x = x,
+        ymin = as.integer(Description),
+        ymax = as.integer(Description) + 1,
+        color = Description
+      ),
+      data = filter(test, position == 1),
+      inherit.aes = FALSE
+    )
+  ) %>%
+  add(scale_x_reverse()) %>%
+  add(scale_y_reverse()) %>%
+  remove_y_axis() %>%
+  remove_x_axis()
+)
+```
+
+
+# KEGG
+
+## GSEA
+
+```{r}
+subset_terms <- c(
+  "Basal transcription factors", "Endocytosis",
+  "Ubiquitin mediated proteolysis", "ECM-receptor interaction",
+  "PI3K-Akt signaling pathway", "Apoptosis"
+)
+
+kegg_gsea_df <- as.data.frame(kegg_gsea)
+
+# enrichplot::gseaplot2(kegg_gsea, kegg_gsea_subset$N)
+
+kegg_gsea_subset <- kegg_gsea_df %>%
+  mutate(N = seq_along(ID), .before = ID) %>%
+  filter(Description %in% subset_terms) %>%
+  arrange(desc(NES)) %>%
+  select(N, Description, p.adjust, NES)
+
+kegg_gsea_data <- enrichplot:::get_gsdata(kegg_gsea, kegg_gsea_subset$N)
+
+kegg_gsea_plot <- kegg_gsea_data %>%
+  mutate(
+    Description = factor(Description, levels = kegg_gsea_subset$Description)
+  ) %>%
+  plot_gsea("KEGG pathways") %>%
+  remove_legend()
+
+kegg_gsea_plot
+```
+
+```{r}
+kegg_gsea_table <- kegg_gsea_subset %>%
+  select(Description, p.adjust, NES) %>%
+  mutate(
+    Description = factor(Description, levels = kegg_gsea_subset$Description)
+  ) %>%
+  print_table("KEGG pathway term")
+```
+
+# Figure
+
+```{r}
+# func_enrichment_figure <- go_slim_gsea_plot[[1]] + labs(tag = "a") +
+#   secRecon_gsea_plot[[1]] + labs(tag = "b") +
+#   wrap_table(go_slim_gsea_table, panel = "full") +
+#   wrap_table(secRecon_gsea_table, panel = "full") +
+#   plot_layout(widths = c(10, 10), heights = c(10, 9)) &
+#   theme(plot.tag = element_text(size = tag_fontsize, face = "bold"))
+
+func_enrichment_figure <- go_slim_gsea_plot[[1]] + labs(tag = "a") +
+  secRecon_gsea_plot[[1]] + labs(tag = "b") +
+  kegg_gsea_plot[[1]] + labs(tag = "c") +
+  wrap_table(go_slim_gsea_table, panel = "full", space = "fixed") +
+  wrap_table(secRecon_gsea_table, panel = "full", space = "fixed") +
+  wrap_table(kegg_gsea_table, panel = "full", space = "fixed") &
+  theme(
+    plot.tag = element_text(size = tag_fontsize, face = "bold"),
+    text = element_text(family = "Arial")
+  )
+
+ggsave(
+  here("plots/manuscript/functional_enrichment.svg"),
+  width = measurements::conv_unit(18, "cm", "in"),
+  height = measurements::conv_unit(7, "cm", "in")
+)
+```
+
+## Data for manuscript
+
+```{r}
+n_goslim_terms <- tar_read(go_slim,
+  store = here("results/R/functional_enrichment/")
+)$term2name %>%
+  nrow()
+
+
+save(
+  go_slim_gsea_df, n_goslim_terms, secRecon, secRecon_gsea_df,
+  kegg_gsea_df, kegg_gsea_subset,
+  file = here("results/functional_enrichment/functional_enrichment.RData")
+)
+```

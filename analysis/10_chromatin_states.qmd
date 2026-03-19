@@ -1,0 +1,485 @@
+---
+title: Chromatin States
+author: Markus Riedl
+date: "`r Sys.Date()`"
+toc: true
+number-sections: true
+format:
+  html:
+    embed-resources: true
+knitr:
+  opts_chunk:
+    collapse: true
+---
+
+
+```{r}
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(targets)
+  library(tidyplots)
+  library(ggpubr)
+  library(grid)
+  library(here)
+  library(conflicted)
+})
+
+source(here("analysis/99_globals.R"))
+source(here("R/util.R"))
+
+conflicts_prefer(
+  dplyr::filter
+)
+
+tidyplots_options(
+  my_style = function(x) {
+    x %>%
+      adjust_font(fontsize = base_fontsize) %>%
+      adjust_theme_details(
+        plot.tag = element_text(size = tag_fontsize, face = "bold")
+      )
+  }
+)
+```
+
+```{r}
+tar_load(overlaps, store = here("results/R/chromatin_states/"))
+glimpse(overlaps)
+```
+
+```{r}
+type_colors <- c(
+  "Repressive" = colors_discrete_friendly[1],
+  "Transcription" = colors_discrete_friendly[5],
+  "Enhancer" = colors_discrete_friendly[6],
+  "Promoter" = colors_discrete_friendly[3]
+)
+
+state2label <- c(
+  "1" = "Polycomb-repressed region",
+  "2" = "Quiescent",
+  "3" = "Repressed Heterochromatin",
+  "4" = "Strong Transcription",
+  "5" = "Weak Genic Enhancer",
+  "6" = "Weak Enhancer",
+  "7" = "Active Enhancer 1",
+  "8" = "Active Enhancer 2",
+  "9" = "Active Promoter",
+  "10" = "TSS Upstream",
+  "11" = "TSS Downstream"
+)
+```
+
+
+# Overlap enrichment
+
+```{r}
+overlaps %>%
+  filter(!tp %in% c("Tp7", "Tp10")) %>%
+  filter(region == "genes") %>%
+  tidyplot(
+    x = decile,
+    y = enrichment,
+    color = type,
+    group = state,
+    dodge_width = 0
+  ) %>%
+  add_mean_line(linewidth = 0.6, alpha = 1) %>%
+  add_sd_ribbon(data = filter_rows(state == 1), alpha = 0.2) %>%
+  add_sd_ribbon(data = filter_rows(state == 2), alpha = 0.2) %>%
+  add_sd_ribbon(data = filter_rows(state == 3), alpha = 0.2) %>%
+  add_sd_ribbon(data = filter_rows(state == 4), alpha = 0.2) %>%
+  add_sd_ribbon(data = filter_rows(state == 5), alpha = 0.2) %>%
+  add_sd_ribbon(data = filter_rows(state == 6), alpha = 0.2) %>%
+  add_sd_ribbon(data = filter_rows(state == 7), alpha = 0.2) %>%
+  add_sd_ribbon(data = filter_rows(state == 8), alpha = 0.2) %>%
+  add_sd_ribbon(data = filter_rows(state == 9), alpha = 0.2) %>%
+  add_sd_ribbon(data = filter_rows(state == 10), alpha = 0.2) %>%
+  add_mean_dot()
+```
+
+# Coverage
+
+```{r}
+tar_load(coverages, store = here("results/R/chromatin_states"))
+```
+
+```{r}
+format_p <- function(p, eps = 0.001) {
+  if (p < eps) {
+    paste0("p ", format.pval(p, eps = eps))
+  } else {
+    paste0("p = ", format.pval(p, eps = eps))
+  }
+}
+```
+
+```{r, eval = FALSE}
+coverages %>%
+  tidyplot(x = decile, y = coverage, color = tp) %>%
+  add_line(linewidth = 0.6) %>%
+  add_data_labels_repel(
+    data = filter_rows(decile == 1), label = tp, dodge_width = 0
+  ) %>%
+  split_plot(state_label)
+```
+
+```{r}
+coverages_plot_data <- coverages %>%
+  mutate(type = factor(type, levels = c(
+    "Repressive", "Transcription", "Enhancer", "Promoter"
+  ))) %>%
+  # Use geometric mean over all chromatin state timepoints
+  group_by(gene, state, decile, state_label, type) %>%
+  summarise(
+    coverage = exp(mean(log(coverage)))
+  ) %>%
+  ungroup()
+
+# data.frame(x = c(1, 2, 3)) %>%
+#   tidyplot(x = x) %>%
+#   add_histogram() %>%
+#   adjust_x_axis_title("$paste(\"% in gene bodies\")~symbol(\"\\261\")~10*kb$")
+
+coverages_effsizes <- coverages_plot_data %>%
+  dplyr::select(state_label, decile, coverage) %>%
+  filter(decile %in% c(1, 10)) %>%
+  mutate(decile = droplevels(decile)) %>%
+  mutate(decile = relevel(decile, "1")) %>%
+  group_split(state_label) %>%
+  map_dfr(function(x) {
+    data.frame(
+      state_label = unique(x$state_label),
+      delta = effsize::cliff.delta(coverage ~ decile, data = x)$estimate
+    )
+  }) %>%
+  mutate(
+    delta_formatted = paste0(
+      "delta~'= ",
+      round(delta, digits = 3), "'"
+    )
+  )
+coverages_effsizes
+
+coverages_test <- ggpubr::compare_means(
+  coverage ~ decile,
+  coverages_plot_data,
+  method = "kruskal.test",
+  group.by = "state"
+) %>%
+  arrange(state) %>%
+  full_join(
+    coverages_plot_data %>%
+      dplyr::select(state, state_label, type, state) %>%
+      unique(),
+    by = join_by(state)
+  ) %>%
+  # mutate(
+  #   cliffs_delta = coverages_effsizes
+  # ) %>%
+  mutate(
+    p_formatted = paste0(
+      "italic(p)~'",
+      ifelse(p.adj < 0.0001, "", "= "),
+      map_chr(p.adj, rstatix::p_format), "'"
+    )
+  ) %>%
+  left_join(
+    coverages_effsizes,
+    by = join_by(state_label)
+  ) %>%
+  left_join(
+    coverages_plot_data %>%
+      group_by(state_label, decile) %>%
+      summarise(mean_y = mean(coverage)) %>%
+      group_by(state_label) %>%
+      summarise(
+        max_y1 = max(mean_y) * 1.1,
+        max_y2 = max(mean_y)
+      ),
+    by = join_by(state_label)
+  )
+
+(coverages_plot <- coverages_plot_data %>%
+  tidyplot(x = decile, y = coverage, color = type) %>%
+  add_mean_line() %>%
+  add_ci95_ribbon() %>%
+  adjust_colors(type_colors) %>%
+  adjust_x_axis_title("Decile") %>%
+  adjust_y_axis_title(
+    "Proportion in gene regions [%]"
+  ) %>%
+  add(
+    scale_y_continuous(expand = expansion(mult = c(0.05, 0.15)))
+  ) %>%
+  # adjust_y_axis_title(
+  #   "$paste(\"% in gene bodies\")~symbol(\"\\261\")~10*kb$"
+  # ) %>%
+  add(
+    geom_text(
+      mapping = aes(
+        x = 1,
+        y = Inf,
+        label = p_formatted
+      ),
+      data = coverages_test, hjust = 0, vjust = 1,
+      size = 8, size.unit = "pt", color = "black", parse = TRUE
+    )
+  ) %>%
+  # add(
+  #   geom_text(
+  #     mapping = aes(
+  #       x = 1,
+  #       y = max_y2,
+  #       label = delta_formatted
+  #     ),
+  #     data = coverages_test, hjust = 0, vjust = 0.5,
+  #     size = 8, size.unit = "pt", color = "black", parse = TRUE
+  #   )
+  # ) %>%
+  add(
+    labs(fill = "Category", color = "Category")
+  ) %>%
+  facet("state_label",
+    scales = "free_y",
+    ncol = 4
+  ) %>%
+  adjust_size(NA, NA) %>%
+  add(theme(
+    legend.position = "inside",
+    legend.position.inside = c(0.9, 0.1)
+  ))
+)
+```
+
+```{r, eval = FALSE}
+test2 <- coverages_test %>%
+  `[`(c(1, 5, 9, 2, 6, 10, 3, 7, 11, 4, 8), ) %>%
+  dplyr::select(delta_formatted, p_formatted)
+
+test <- grid::grid.grabExpr({
+  grid::grid.draw(coverages_plot)
+  grid::grid.force()
+  panels <- ComplexHeatmap::list_components() %>%
+    str_subset("^panel-[0-9].*") %>%
+    `[`(1:11)
+  # ComplexHeatmap::list_components() %>% str()
+  # grid::grid.ls()
+
+  # panel <- panels[4]
+  # popViewport()
+  # seekViewport(panel)
+  # seekViewport("layout")
+  # grid::grid.text("test")
+
+  for (i in seq_along(panels)) {
+    seekViewport(panels[i])
+    grid::grid.text(str2expression(test2$p_formatted[i]),
+      x = 0.5, y = 0.9, default.units = "npc",
+      hjust = 0.5, gp = gpar(fontsize = 8)
+    )
+    grid::grid.text(str2expression(test2$delta_formatted[i]),
+      x = 0.5, y = 0.75, default.units = "npc",
+      hjust = 0.5, gp = gpar(fontsize = 8)
+    )
+    popViewport()
+  }
+})
+
+grid.draw(test)
+```
+
+```{r}
+coverages_mean <- coverages_plot_data %>%
+  group_by(state, decile) %>%
+  summarise(
+    avg = mean(coverage)
+  ) %>%
+  pivot_wider(names_from = "decile", values_from = "avg") %>%
+  column_to_rownames("state") %>%
+  as.matrix()
+```
+
+# Emissions
+
+```{r}
+tar_load(emissions, store = here("results/R/chromatin_states/"))
+```
+
+```{r}
+emissions_color <- circlize::colorRamp2(
+  c(0, 1), c("white", "blue")
+)(seq(0, 1, 0.01))
+```
+
+```{r}
+emissions_heatmap <- emissions %>%
+  tidyplot(x = mark, y = state, color = emission) %>%
+  add_heatmap() %>%
+  reorder_x_axis_labels(
+    c("H3K4me3", "H3K27ac", "H3K4me1", "H3K36me3", "H3K9me3", "H3K27me3")
+  ) %>%
+  reorder_y_axis_labels(unique(emissions$state) %>% rev()) %>%
+  # rename_y_axis_labels(c(
+  #   "1" = "Polycomb-repressed region",
+  #   "2" = "Quiescent",
+  #   "3" = "Repressed Heterochromatin",
+  #   "4" = "Strong Transcription",
+  #   "5" = "Weak Genic Enhancer",
+  #   "6" = "Weak Enhancer",
+  #   "7" = "Active Enhancer 1",
+  #   "8" = "Active Enhancer 2",
+  #   "9" = "Active Promoter",
+  #   "10" = "TSS Upstream",
+  #   "11" = "TSS Downstream"
+  # )) %>%
+  rename_y_axis_labels(c(
+    "1" = "PcRepr",
+    "2" = "Quie",
+    "3" = "ReprHet",
+    "4" = "Tx",
+    "5" = "WkGEnh",
+    "6" = "WkEnh",
+    "7" = "AEnh1",
+    "8" = "AEnh2",
+    "9" = "APr",
+    "10" = "TSSUp",
+    "11" = "TSSDn"
+  )) %>%
+  adjust_y_axis(position = "right") %>%
+  # flip_plot() %>%
+  remove_x_axis_title() %>%
+  remove_y_axis_title() %>%
+  adjust_colors(
+    emissions_color,
+    breaks = c(0, 1),
+    # labels = NULL,
+    limits = c(0, 1),
+    name = "Emission"
+  ) %>%
+  # remove_legend() %>%
+  # add(labs(tag = "a")) %>%
+  add(theme(
+    panel.border = element_rect(color = "black", fill = NA),
+    legend.frame = element_rect(color = "black", linewidth = 0.3),
+    legend.direction = "vertical",
+    legend.title.position = "top",
+    legend.title = element_text(margin = margin(b = 4)),
+    legend.text = element_text(margin = margin(l = 2)),
+    legend.key.width = unit(2.5, "mm"),
+    legend.key.height = unit(2, "mm"),
+    legend.ticks = element_blank(),
+    legend.position = "inside",
+    legend.position.inside = c(1.45, -0.25)
+  )) %>%
+  adjust_size(36 * 6 / 11, 36)
+  # adjust_size(36, 25)
+
+emissions_heatmap
+```
+
+```{r}
+# emissions_heatmap[[1]]
+# grid.rect(x = 3.5, y = 10,
+#   width = 6, height = 3,
+#   default.units = "native"
+# )
+```
+
+
+```{r, eval = FALSE}
+# emissions_matrix <- emissions %>%
+#   pivot_wider(names_from = "mark", values_from = "emission") %>%
+#   column_to_rownames("state") %>%
+#   as.matrix()
+#
+
+chromstate_types <- case_when(
+  1:11 %in% c(1, 2, 3) ~ "Repressive",
+  1:11 %in% c(4) ~ "Transcription",
+  1:11 %in% c(5, 6, 7, 8) ~ "Regulatory Element",
+  1:11 %in% c(9, 10, 11) ~ "Gene Feature"
+)
+
+emissions_heatmap <- emissions_matrix %>%
+  t() %>%
+  `[`(rev(rownames(.)), ) %>%
+  Heatmap(
+    name = "emissions",
+    cluster_rows = FALSE,
+    cluster_columns = FALSE,
+    column_labels = state2label,
+    row_names_gp = gpar(fontsize = 8),
+    column_names_gp = gpar(fontsize = 8),
+    col = emissions_color,
+    show_heatmap_legend = FALSE,
+    bottom_annotation = HeatmapAnnotation(
+      type = anno_simple(chromstate_types,
+        col = type_colors, border = FALSE, height = unit(2, "mm")
+      ),
+      show_annotation_name = FALSE
+    )
+  )
+draw(emissions_heatmap)
+
+test <- grid.grabExpr(draw(emissions_heatmap,
+  show_heatmap_legend = FALSE,
+  show_annotation_legend = FALSE
+))
+```
+
+```{r}
+y_offset <- -2
+x_offset <- 0
+
+pdf(here("plots/manuscript/chromatin_states.pdf"),
+  width = measurements::conv_unit(180, "mm", "in"),
+  height = measurements::conv_unit(84, "mm", "in")
+)
+vp1 <- viewport(
+  20 + x_offset, 50 + y_offset, 10, 10,
+  just = "center",
+  default.units = "mm"
+)
+emissions_heatmap %>%
+  add(labs(tag = "a")) %>%
+  add(theme(plot.tag.position = c(0.05, 1.1))) %>%
+  print(vp = vp1)
+
+vp2 <- viewport(
+  40 + x_offset, 3.5 + y_offset, 130, 80,
+  just = c("left", "bottom"),
+  default.units = "mm"
+)
+(coverages_plot[[1]] + labs(tag = "b")) %>%
+  print(vp = vp2)
+
+# vp1 <- viewport(
+#   just = c("left", "bottom"),
+#   x = 0,
+#   y = 5,
+#   width = 60,
+#   height = 70,
+#   default.units = "mm"
+# )
+# pushViewport(vp1)
+# grid.draw(test)
+# decorate_heatmap_body("emissions", {
+#   grid.rect()
+# })
+# draw(emissions_heatmap,
+#   show_heatmap_legend = FALSE,
+#   show_annotation_legend = FALSE
+# )
+# decorate_heatmap_body("emissions", {
+#   grid.rect()
+# })
+# popViewport()
+dev.off()
+```
+
+```{r}
+save(coverages_mean, coverages_test,
+  file = here("results/chromatin_states/chromatin_states.RData")
+)
+```

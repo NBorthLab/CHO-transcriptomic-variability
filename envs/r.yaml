@@ -1,0 +1,44 @@
+name: P06-r
+channels:
+  - conda-forge
+  - bioconda
+  - r
+dependencies:
+  - r-essentials=4.3
+  - r-extrafont
+  - r-cairo
+  - r-svglite
+  - r-fontawesome
+  - r-argparse
+  - r-optparse
+  - r-conflicted
+  - r-here
+  - r-logger
+  - r-targets
+  - r-tarchetypes
+  - r-crew
+  - r-visnetwork
+  - r-quarto
+  - r-rmdformats
+  - r-weightit
+  - r-devtools
+  - bioconductor-deseq2
+  - bioconductor-edger
+  - bioconductor-vsn
+  - bioconductor-pvca
+  - bioconductor-complexheatmap
+  - bioconductor-clusterprofiler
+  - bioconductor-mgsa
+  - r-robustrankaggreg
+  - r-moments
+  - bioconductor-annotationhub
+  - bioconductor-annotate
+  - bioconductor-orthogene
+  - bioconductor-org.mm.eg.db
+  - r::r-docstring
+  - r-hexbin
+  - r-ggally
+  - r-ggpubr
+  - r-hmisc
+platforms:
+  - linux-64

@@ -1,0 +1,4 @@
+TZ="Europe/Vienna"
+RENV_PATHS_PREFIX_AUTO=FALSE
+RENV_PATHS_ROOT="/data/mriedl/R_renv_cache"
+RENV_PATHS_LIBRARY="renv/library"

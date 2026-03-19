@@ -1,0 +1,13 @@
+name: P06-python
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - pygtftk
+  - ipython
+  - ipykernel
+  - rpy2
+  - pyyaml
+platforms:
+  - linux-64

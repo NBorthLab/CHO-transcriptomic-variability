@@ -1,0 +1,12 @@
+name: P06-r-renv
+channels:
+  - conda-forge
+  - bioconda
+  - r
+dependencies:
+  - conda-forge::r-base==4.4
+  - conda-forge::r-renv
+  - conda-forge::zlib
+  - conda-forge::jupyterlab
+  - conda-forge::quarto
+  - conda-forge::gsl

@@ -1,0 +1,44 @@
+.snakemake
+data/
+
+analysis/*_files
+analysis/*_cache
+
+archive
+
+plots
+
+logs
+
+results
+# results/*
+# !results/R
+# !results/counts/
+#
+# results/counts/*
+# !results/counts/all_gene_counts.rds
+
+tmp/
+
+/.quarto/
+
+**/.ipynb_checkpoints
+.vscode
+.virtual_documents
+resources/chromatin_states
+resources/genome
+resources/orthologs
+resources/gene_ontology
+scratch/31_cce
+archive/scripts
+work
+
+.nextflow*
+_targets
+results_test
+results_testdata
+scratch/47_weighted_entropy
+scratch/old_analysis_2025-08
+scratch/41_distinct_cell_lines
+scratch/34_ibiohub
+scratch/07_vst_files/figure-html

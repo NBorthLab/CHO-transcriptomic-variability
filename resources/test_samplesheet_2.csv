@@ -1,0 +1,17 @@
+sample,dataset,fastq_1,fastq_2
+Papez01,Papez,/data/borth/mriedl/data/P06-RawData/results/fastq/INH010101_1.fastq.gz,/data/borth/mriedl/data/P06-RawData/results/fastq/INH010101_2.fastq.gz
+Papez01,Papez,/data/borth/mriedl/data/P06-RawData/results/fastq/INH010102_1.fastq.gz,/data/borth/mriedl/data/P06-RawData/results/fastq/INH010102_2.fastq.gz
+Papez01,Papez,/data/borth/mriedl/data/P06-RawData/results/fastq/INH010103_1.fastq.gz,/data/borth/mriedl/data/P06-RawData/results/fastq/INH010103_2.fastq.gz
+Papez01,Papez,/data/borth/mriedl/data/P06-RawData/results/fastq/INH010104_1.fastq.gz,/data/borth/mriedl/data/P06-RawData/results/fastq/INH010104_2.fastq.gz
+NovakProd01,NovakProducers,/data/borth/mriedl/data/P06-RawData/results/fastq/58309.fastq.gz,
+NovakLnc05,NovakLncRNA,/data/borth/mriedl/data/P06-RawData/results/fastq/INH050501.fastq.gz,
+NovakLnc05,NovakLncRNA,/data/borth/mriedl/data/P06-RawData/results/fastq/INH050502.fastq.gz,
+NovakLnc05,NovakLncRNA,/data/borth/mriedl/data/P06-RawData/results/fastq/INH050503.fastq.gz,
+NovakLnc05,NovakLncRNA,/data/borth/mriedl/data/P06-RawData/results/fastq/INH050504.fastq.gz,
+ZeLa01,HefziCHOZeLa,/data/borth/mriedl/data/P06-RawData/results/fastq/SRX11420347_SRR15111580_1.fastq.gz,/data/borth/mriedl/data/P06-RawData/results/fastq/SRX11420347_SRR15111580_2.fastq.gz
+Syno10,Synoground,/data/borth/mriedl/data/P06-RawData/results/fastq/SRX25176385_SRR29672930_1.fastq.gz,/data/borth/mriedl/data/P06-RawData/results/fastq/SRX25176385_SRR29672930_2.fastq.gz
+Dhiman01,Dhiman,/data/borth/mriedl/data/P06-RawData/results/fastq/ERX4268279_ERR4319912_1.fastq.gz,/data/borth/mriedl/data/P06-RawData/results/fastq/ERX4268279_ERR4319912_2.fastq.gz
+Wijk01,Wijk,/data/borth/mriedl/data/P06-RawData/results/fastq/SRX1457795_SRR2968323_1.fastq.gz,/data/borth/mriedl/data/P06-RawData/results/fastq/SRX1457795_SRR2968323_2.fastq.gz
+Malm01,Malm,/data/borth/mriedl/data/P06-RawData/results/fastq/SRX9101117_SRR12618082.fastq.gz,/data/borth/mriedl/data/P06-RawData/results/fastq/SRX9101117_SRR12618083.fastq.gz
+Hofer001,Hofer,/data/borth/mriedl/data/P06-RawData/results/fastq/Sample001_Run1_R1.fastq.gz,/data/borth/mriedl/data/P06-RawData/results/fastq/Sample001_Run1_R2.fastq.gz
+Stor01,Stor,/data/borth/mriedl/data/P06-RawData/results/fastq/271538_S1_R1_001.fastq.gz,/data/borth/mriedl/data/P06-RawData/results/fastq/271538_S1_R2_001.fastq.gz

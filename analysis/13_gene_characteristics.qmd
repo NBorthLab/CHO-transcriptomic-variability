@@ -1,0 +1,719 @@
+---
+title: Gene Features
+author: Markus Riedl
+date: "`r Sys.Date()`"
+toc: true
+number-sections: true
+format:
+  html:
+    embed-resources: true
+knitr:
+  opts_chunk:
+    collapse: true
+---
+
+
+```{r}
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(targets)
+  library(tidyplots)
+  library(ggpubr)
+  library(here)
+  library(conflicted)
+  library(plyranges)
+  library(rtracklayer)
+  library(GenomicFeatures)
+  library(GenomicDistributions)
+  library(BSgenome.Cgriseus.NCBI.CriGriPICRH1.0)
+  library(karyoploteR)
+  library(motifStack)
+  library(universalmotif)
+})
+
+source(here("analysis/99_globals.R"))
+source(here("R/util.R"))
+
+conflicts_prefer(
+  dplyr::filter,
+  base::setdiff
+)
+
+tidyplots_options(
+  my_style = function(x) {
+    x %>%
+      adjust_font(fontsize = base_fontsize) %>%
+      adjust_theme_details(
+        plot.tag = element_text(size = tag_fontsize, face = "bold")
+      )
+  }
+)
+```
+
+
+```{r}
+tar_load(first_pc, store = here("results/R/principal_components/"))
+
+color_palette <- tidyplots:::make_palette(colors_discrete_apple)(10)
+```
+
+
+# Characteristics of genes
+
+
+## GC content of genes
+
+```{r}
+tar_load(gene_lengths, store = here("results/R/gene_characteristics"))
+tar_load(gene_dists, store = here("results/R/gene_characteristics"))
+tar_load(gc_contents, store = here("results/R/gene_characteristics"))
+```
+
+```{r, eval = FALSE}
+
+# Testing sliding window GC content
+
+txdb_tss_flanked <- txdb_genes %>%
+  plyranges::anchor_5p() %>%
+  plyranges::mutate(width = 1) %>%
+  plyranges::stretch(2 * 1000)
+
+tss_deciles_flanked <- map(1:10, get_decile_granges, txdb_tss_flanked)
+
+var_windows <- GenomicRanges::slidingWindows(
+  tss_deciles_flanked[[1]], 100
+)
+stable_windows <- GenomicRanges::slidingWindows(
+  tss_deciles_flanked[[10]], 100
+)
+
+calc_GC <- function(gene) {
+  # (gene <- var_windows[[3]])
+  strand <- strand(gene) %>% unique()
+  # Remove genes whose window go beyond chromosome limits
+  if (any(start(gene) < 0 | end(gene) < 0)) {
+    return(NULL)
+  }
+  (seqs <- IRanges::Views(
+    BSgenome.Cgriseus.NCBI.CriGriPICRH1.0,
+    gene
+  )
+  )
+  freq <- Biostrings::alphabetFrequency(seqs)
+  gc_freq <- apply(freq[, c("C", "G")], 1, sum) / rowSums(freq)
+  if (strand == "-") {
+    gc_freq <- rev(gc_freq)
+  }
+  gc_freq
+}
+
+var_res <- map_dfc(var_windows, calc_GC)
+stable_res <- map_dfc(stable_windows, calc_GC)
+
+
+var_res_dfl <- var_res %>%
+  mutate(
+    window = seq_len(nrow(.)),
+    dec = "var"
+  ) %>%
+  pivot_longer(-c(window, dec), names_to = "gene", values_to = "gc")
+
+stable_res_dfl <- stable_res %>%
+  mutate(
+    window = seq_len(nrow(.)),
+    dec = "stable"
+  ) %>%
+  pivot_longer(-c(window, dec), names_to = "gene", values_to = "gc")
+
+bind_rows(
+  var_res_dfl,
+  stable_res_dfl
+) %>%
+  filter(gene %in% sample(.$gene, 200)) %>% # Much faster than slice_sample()
+  tidyplot(x = window, y = gc, color = dec) %>%
+  add_mean_line() %>%
+  add_ci95_ribbon()
+
+```
+
+```{r}
+#' Function for running statistics on gene characteristics of each decile
+run_stats <- function(data, formula) {
+  effsize <- data %>%
+    mutate(dec = factor(dec, levels = unique(dec), labels = 1:10)) %>%
+    filter(dec %in% c(1, 10)) %>%
+    mutate(dec = droplevels(dec)) %>%
+    # rstatix::wilcox_effsize(gene ~ dec, comparisons = list(c(1, 10)))
+    effsize::cliff.delta({{ formula }}, data = .)
+
+  test <- compare_means({{ formula }}, data,
+    method = "kruskal.test"
+  ) %>%
+    mutate(
+      method = "'Kruskal-Wallis,'~italic(p)",
+      p.format = rstatix::p_format(p)
+    ) %>%
+    bind_rows(data.frame(
+      p.adj = effsize$estimate, method = "'Cliffs'~delta*','",
+      p.format = format(effsize$estimate, digits = 2)
+    )) %>%
+    mutate(label = paste0(
+      method, "~'", p.format, "'"
+    ))
+  return(test)
+}
+```
+
+```{r}
+genes_gc_data <- gc_contents %>%
+  imap(\(x, y) data.frame(dec = y, gene = x)) %>%
+  map(mutate, dec = str_remove(dec, "gc_content_")) %>%
+  purrr::reduce(bind_rows) %>%
+  mutate(dec = factor(dec, levels = unique(dec), labels = 1:10))
+
+# genes_gc_data %>%
+#   tidyplot(x = dec, y = gene, color = dec) %>%
+#   add_violin(draw_quantiles = 0.5) %>%
+#   reverse_x_axis_labels() %>%
+#   adjust_colors(rev(colors_discrete_apple)) %>%
+#   add(ggpubr::stat_compare_means(
+#     method = "kruskal.test",
+#     size = 8,
+#     size.unit = "pt",
+#     hjust = 0,
+#     show.legend = FALSE
+#   ))
+
+genes_gc_test <- run_stats(genes_gc_data, gene ~ dec)
+
+
+genes_gc_plot <- genes_gc_data %>%
+  tidyplot(x = gene, color = dec) %>%
+  add(
+    geom_density(fill = NA)
+  ) %>%
+  adjust_colors(color_palette) %>%
+  adjust_x_axis_title("% GC in gene bodies") %>%
+  adjust_y_axis_title("Density") %>%
+  add(labs(color = "Decile")) %>%
+  # add(scale_y_continuous(expand = expansion(c(0, 0)))) %>%
+  add(
+    geom_text(
+      aes(
+        x = 0.3,
+        y = c(12.5, 11.5),
+        label = label
+      ),
+      parse = TRUE,
+      data = genes_gc_test,
+      color = "black",
+      inherit.aes = FALSE,
+      size = 8, size.unit = "pt",
+      hjust = 0, vjust = 1
+    )
+  ) %>%
+  adjust_size(50, 45) %>%
+  add(
+    theme(
+      legend.position = "bottom"
+    )
+  )
+genes_gc_plot
+```
+
+
+## Gene lengths/widths
+
+```{r}
+# genes_deciles <- map(1:10, get_decile_granges, txdb_genes)
+
+genes_widths <- gene_lengths %>%
+  imap(\(x, y) data.frame(dec = y, width = x)) %>%
+  map(mutate, dec = str_remove(dec, "gene_length_")) %>%
+  purrr::reduce(bind_rows)
+
+genes_widths_test <- run_stats(genes_widths, width ~ dec)
+
+genes_widths_plot <- genes_widths %>%
+  mutate(dec = factor(dec, levels = unique(dec), labels = 1:10)) %>%
+  tidyplot(x = width, color = dec) %>%
+  add(geom_density(fill = NA)) %>%
+  adjust_x_axis(transform = "log10") %>%
+  adjust_x_axis_title("Gene length [bp]") %>%
+  adjust_y_axis_title("Density") %>%
+  adjust_size(50, 45) %>%
+  # ggpubr::facet("dec") %>%
+  adjust_colors(colors_discrete_apple) %>%
+  add(
+    geom_text(
+      aes(
+        x = 0.3,
+        y = c(1, 0.92),
+        label = label
+      ),
+      parse = TRUE,
+      data = genes_widths_test,
+      color = "black",
+      inherit.aes = FALSE,
+      size = 8, size.unit = "pt",
+      hjust = 0, vjust = 1
+    )
+  ) %>%
+  add(labs(color = "Decile"))
+genes_widths_plot
+```
+
+## Gene neighbor distances
+
+```{r}
+genes_neigh_dist <- gene_dists %>%
+  imap(\(x, y) data.frame(dec = y, dist = x)) %>%
+  map(mutate, dec = str_remove(dec, "gene_neigh_dist_")) %>%
+  purrr::reduce(bind_rows)
+
+genes_widths_effsize <- genes_neigh_dist %>%
+  mutate(dec = factor(dec, levels = unique(dec), labels = 1:10)) %>%
+  # rstatix::wilcox_effsize(dist ~ dec, comparisons = list(c(1, 10)))
+  filter(dec %in% c(1, 10)) %>%
+  mutate(dec = droplevels(dec)) %>%
+  # rstatix::wilcox_effsize(gene ~ dec, comparisons = list(c(1, 10)))
+  effsize::cliff.delta(dist ~ dec, data = .)
+
+genes_neigh_dist_test <- run_stats(genes_neigh_dist, dist ~ dec)
+
+genes_neigh_dist_plot <- genes_neigh_dist %>%
+  mutate(dec = factor(dec, levels = unique(dec), labels = 1:10)) %>%
+  tidyplot(x = dist, color = dec) %>%
+  add(geom_density(fill = NA)) %>%
+  adjust_x_axis(transform = "log10") %>%
+  adjust_x_axis_title("Distance [bp]") %>%
+  adjust_y_axis_title("Density") %>%
+  # ggpubr::facet("dec") %>%
+  adjust_size(50, 45) %>%
+  adjust_colors(colors_discrete_apple) %>%
+  add(
+    geom_text(
+      aes(
+        x = 0.3,
+        y = c(0.63, 0.58),
+        label = label
+      ),
+      parse = TRUE,
+      data = genes_neigh_dist_test,
+      color = "black",
+      inherit.aes = FALSE,
+      size = 8, size.unit = "pt",
+      hjust = 0, vjust = 1
+    )
+  ) %>%
+  add(labs(color = "Decile"))
+genes_neigh_dist_plot
+```
+
+
+# Localization on the chromosomes
+
+Prepare genome for karyoploteR.
+
+```{r}
+#| eval = FALSE
+
+chrom_sizes <- read_tsv(
+  here("resources/genome/GCF_003668045.3_CriGri-PICRH-1.0_assembly_report.txt"),
+  comment = "#", col_names = FALSE
+)
+
+chromosomes <- chrom_sizes %>%
+  filter(str_detect(X1, "chr")) %>%
+  pull(X1) %>%
+  str_sort(numeric = TRUE)
+chromosome_anno <- GRanges(
+  seqnames = Rle(chrom_sizes$X1),
+  ranges = IRanges(start = rep(1, nrow(chrom_sizes)), end = chrom_sizes$X9)
+)
+```
+
+```{r}
+#| eval = FALSE
+
+pp <- getDefaultPlotParams(plot.type = 6)
+pp$topmargin <- 15
+pp$bottommargin <- 15
+pp$data1inmargin <- 0
+pp$data2inmargin <- 0
+pp$data1outmargin <- 0
+pp$data2outmargin <- 0
+pp$data1height <- 0
+pp$data2height <- 0
+pp$ideogramheight <- 85
+
+kp <- plotKaryotype(
+  genome = chromosome_anno,
+  chromosomes = chromosomes,
+  plot.type = 6,
+  ideogram.plotter = NULL,
+  plot.params = pp
+)
+kpPlotDensity(kp,
+  txdb_genes,
+  border = "black",
+  lwd = 0.2,
+  col = "black",
+  r0 = 0,
+  r1 = 0.33
+)
+kpPlotDensity(kp,
+  txdb_genes[txdb_genes$decile == 10],
+  border = "black",
+  lwd = 0.2,
+  col = "blue",
+  r0 = 0.33,
+  r1 = 0.66)
+kpPlotDensity(kp,
+  txdb_genes[txdb_genes$decile == 1],
+  border = "black",
+  lwd = 0.2,
+  col = "orange",
+  r0 = 0.66,
+  r1 = 1
+)
+
+# kpDataBackground(kp, col = "lightgrey")
+# for (i in seq_len(10)) {
+#   kpPlotDensity(kp,
+#     txdb_genes[txdb_genes$decile == i],
+#     border = "black",
+#     lwd = 0.2,
+#     col = "black",
+#     r0 = (i - 1) / 10,
+#     r1 = i / 10
+#   )
+# }
+```
+
+
+# Motifs
+
+
+## TATA box
+
+```{r}
+tar_load(decile_motifs_TATA, store = here("results/R/motifs"))
+tar_load(decile_tss, store = here("results/R/gene_features/"))
+tar_load(decile_tss_flanks, store = here("results/R/gene_features/"))
+```
+
+```{r}
+process_fimo_results <- function(gr) {
+  tmp <- seqnames(gr) %>% as.vector()
+  gr <- gr %>%
+    mutate(
+      tss_name = str_replace(tmp, "(.*)__.*", "\\1"),
+      tss_chr = str_replace(tmp, ".*__(.*)", "\\1"),
+      tss_gene = str_replace(tmp, "p.@([A-Za-z0-9]+)_.*__.*", "\\1"),
+      tss_tx = str_replace(tmp, "p.@[A-Za-z0-9]+_(.*)__.*", "\\1")
+    )
+  new_gr <- GRanges(
+    seqnames = gr$tss_chr,
+    ranges = ranges(gr),
+    strand = strand(gr)
+  )
+  mcols(new_gr) <- mcols(gr)
+  return(new_gr)
+}
+
+tss_flanks_var <- decile_tss_flanks$tss_flanks_1
+tss_var <- decile_tss$tss_1
+tss_stable <- decile_tss$tss_10
+
+tata_var <- decile_motifs_TATA$best_site_1 %>% process_fimo_results()
+tata_stable <- decile_motifs_TATA$best_site_10 %>% process_fimo_results()
+
+
+decile_motifs_TATA %>%
+  map_int(length) %>%
+  data.frame(dec = factor(1:10), n = .) %>%
+  tidyplot(x = dec, y = n) %>%
+  add_sum_bar()
+```
+
+```{r}
+enrich_motif <- function(motif_gr, tss, window_size = 100) {
+  n_motif_results <- length(motif_gr)
+  density_matrix <- matrix(
+    0,
+    nrow = length(tss),
+    ncol = window_size + 1,
+    dimnames = list(
+      as.vector(tss$name),
+      seq(
+        -(window_size - window_size / 2), window_size - window_size / 2, by = 1
+      )
+    )
+  )
+  #
+  for (i in seq_len(n_motif_results)) {
+    nth_motif <- motif_gr[i]
+    start_motif <- start(nth_motif)
+    end_motif <- end(nth_motif)
+    corresponding_tss <- tss[tss$name == nth_motif$tss_name]
+    position_tss <- start(corresponding_tss)
+    delta_start <- start_motif - position_tss
+    delta_end <- end_motif - position_tss
+    position_indices <- delta_start:delta_end + window_size / 2
+    density_matrix[corresponding_tss$name, position_indices] <- 1
+  }
+  return(density_matrix)
+}
+
+density_matrix_var <- enrich_motif(tata_var, tss_var)
+density_matrix_stable <- enrich_motif(tata_stable, tss_stable)
+
+tata_all_dfl <- decile_motifs_TATA %>%
+  map(process_fimo_results) %>%
+  map2(decile_tss, enrich_motif) %>%
+  imap_dfr(function(x, i) {
+    data.frame(
+      x = colnames(x) %>% as.numeric(),
+      y = colSums(x),
+      type = i,
+      stringsAsFactors = FALSE
+    )
+  }) %>%
+  mutate(type = str_replace(type, "best_site_", "Decile ")) %>%
+  mutate(type = factor(type, levels = paste0("Decile ", 1:10)))
+
+tata_from <- -32
+tata_to <- -29
+
+# tata_box_density_plot <- bind_rows(
+#   data.frame(
+#     x = colnames(density_matrix_var) %>% as.numeric(),
+#     y = colSums(density_matrix_var),
+#     type = "Decile 1",
+#     stringsAsFactors = FALSE
+#   ),
+#   data.frame(
+#     x = colnames(density_matrix_stable) %>% as.numeric(),
+#     y = colSums(density_matrix_stable),
+#     type = "Decile 10",
+#     stringsAsFactors = FALSE
+#   )
+# ) %>%
+tata_box_density_plot <- tata_all_dfl %>%
+  filter(type %in% c("Decile 1", "Decile 10")) %>%
+  tidyplot(x = x, y = y, color = type) %>%
+  add(
+    # FIXME: Find an actual publication of the exact base pair range here
+    geom_rect(
+      aes(xmin = tata_from, x = tata_to, ymin = -Inf, ymax = Inf),
+      fill = "grey90",
+      inherit.aes = FALSE
+    )
+  ) %>%
+  add_reference_lines(x = 0, color = "grey50") %>%
+  add_line(linewidth = 0.4) %>%
+  add(
+    scale_x_continuous(
+      breaks = c(-50, 0, 50),
+      labels = c(-50, "TSS", 50)
+    )
+  ) %>%
+  add(
+    coord_cartesian(xlim = c(-50, 50))
+  ) %>%
+  adjust_y_axis_title("# TATA motifs") %>%
+  remove_x_axis_title() %>%
+  remove_legend_title() %>%
+  adjust_colors(color_palette[c(1, 10)]) %>%
+  # adjust_colors(c(
+  #   "Decile 10" = colors_discrete_friendly[1],
+  #   "Decile 1" = colors_discrete_friendly[4])
+  # ) %>%
+  adjust_size(50, 45) %>%
+  remove_legend()
+  # add(theme(
+  #   legend.position = "inside",
+  #   legend.position.inside = c(0.8, 0.8)
+  # ))
+#
+tata_box_density_plot
+```
+
+
+## TF binding sites
+
+```{r}
+# var_enriched_motifs <- list.files(
+#   "results/motifs/homer/1/motifs_out/homerResults",
+#   pattern = "motif.\\.motif",
+#   full.names = TRUE
+# )
+
+var_enriched_motifs_files <- list.files(
+  here("results/motifs/homer/1/motifs_out/knownResults"),
+  pattern = "known.+\\.motif",
+  full.names = TRUE
+) %>%
+  str_sort(numeric = TRUE)
+
+stable_enriched_motifs_files <- list.files(
+  here("results/motifs/homer/10/motifs_out/knownResults"),
+  pattern = "known.+\\.motif",
+  full.names = TRUE
+) %>%
+  str_sort(numeric = TRUE)
+
+var_enriched_motifs <- var_enriched_motifs_files %>%
+  map(universalmotif::read_homer)
+
+stable_enriched_motifs <- stable_enriched_motifs_files %>%
+  map(universalmotif::read_homer)
+
+get_signature_motif <- function(motifs) {
+  motifs_names <- motifs %>%
+    map(`@`, "name") %>%
+    unlist() %>%
+    str_replace("-", "_") %>%
+    str_replace(":", "_")
+  motifs_ppm <-  motifs %>%
+    map(`[`, "motif") %>%
+    set_names(motifs_names)
+  motifs_pfm <- motifs_ppm  %>%
+    map2(motifs_names, function(x, y) new("pfm", mat = x, name = y))
+  hc <- motifStack::clusterMotifs(motifs_pfm)
+  phylog <- ade4::hclust2phylog(hc)
+  motifs_signature <- motifStack::motifSignature(
+    motifs_pfm,
+    phylog,
+    cutoffPval = 0.0001
+    # groupDistance = 16
+  )
+  motifs_sig_pfms <- motifStack::signatures(motifs_signature)
+  motif_sig_ppm <- universalmotif::convert_motifs(motifs_sig_pfms)
+  return(motif_sig_ppm)
+}
+
+
+var_signature_motif <- get_signature_motif(var_enriched_motifs[1:20]) %>%
+  set_names(c("bZIP", "Zf"))
+stable_signature_motif <- get_signature_motif(stable_enriched_motifs[1:20]) %>%
+  set_names(c("ETS", "NRF"))
+
+plot_seqlogo <- function(seq, title) {
+  ggplot() +
+    ggseqlogo::geom_logo(
+      map({{ seq }}, `[`, "motif")
+    ) +
+    facet_grid(~ seq_group, scales = "free_x") +
+    scale_y_continuous(limits = c(0, 2), breaks = c(0, 1, 2)) +
+    ggseqlogo::theme_logo() +
+    labs(title = title) +
+    theme(
+      axis.ticks.y = element_line(),
+      axis.text.x = element_blank(),
+      axis.title.x = element_blank(),
+      axis.text = element_text(size = 8),
+      axis.title = element_text(size = 8),
+      plot.title = element_text(size = 10, hjust = 0.5, vjust = 0),
+      plot.tag = element_text(size = tag_fontsize, face = "bold")
+    )
+}
+
+var_signature_plots <- plot_seqlogo(var_signature_motif, "Decile 1")
+stable_signature_plots <- plot_seqlogo(stable_signature_motif, "Decile 10")
+
+var_signature_plots
+stable_signature_plots
+```
+
+
+# Figures
+
+## Main figure
+
+```{r}
+figure <-
+  (
+    tata_box_density_plot %>%
+      add(theme(
+        plot.margin = margin(),
+        plot.tag.position = c(0.0, 0.99)
+      ))
+  ) /
+  (
+    genes_gc_plot %>%
+      add(theme(
+        plot.margin = margin(b = 35),
+        plot.tag.position = c(0.0, 0.99),
+        legend.direction = "horizontal",
+        legend.position = "inside",
+        legend.position.inside = c(0.4, -0.35)
+      ))
+  ) +
+  # patchwork::plot_layout(heights = c(0.5, 0.55)) +
+  patchwork::plot_annotation(tag_levels = "a")
+figure
+
+ggsave(here("plots/manuscript/gene_characteristics.pdf"),
+  width = 70, height = 130, units = "mm"
+)
+```
+
+## Supplementary figure
+
+
+```{r}
+panel_gene <- (genes_widths_plot %>% add(labs(tag = "a"))) -
+  (genes_neigh_dist_plot %>% add(labs(tag = "b"))) +
+  patchwork::plot_layout(
+    guides = "collect"
+  )
+
+panel_motifs <- (var_signature_plots %>% add(labs(tag = "c"))) +
+  stable_signature_plots +
+  patchwork::plot_layout(widths = unit(50, "mm"), heights = unit(20, "mm"))
+
+figure <-  panel_gene / panel_motifs +
+  patchwork::plot_layout(heights = c(0.6, 0.4))
+figure
+
+ggsave(here("plots/manuscript/supplementary/gene_characteristics_supp.pdf"),
+  width = 150, height = 110, units = "mm"
+)
+```
+
+```{r}
+save(
+  genes_gc_test, genes_widths_test, genes_neigh_dist_test,
+  file = here("results/gene_charactersistics/gene_charactersistics.RData")
+)
+```
+
+
+
+```{r}
+figure <-
+  (tata_box_density_plot +
+    labs(tag = "a") +
+    theme(plot.margin = margin(b = 10))) /
+    (var_signature_plots + labs(tag = "b") + theme()) +
+    stable_signature_plots /
+      patchwork::plot_layout(
+        heights = c(0.5, 0.2, 0.2)
+      )
+
+ggsave(here("plots/manuscript/motifs.pdf"),
+  plot = figure,
+  width = 69,
+  height = 120,
+  units = "mm"
+)
+```
+
+```{r}
+save(tata_from, tata_to,
+  file = here("results/motifs/motifs.RData")
+)
+```
+

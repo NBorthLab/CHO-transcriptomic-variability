@@ -1,0 +1,632 @@
+---
+title: PCA
+author: Markus Riedl
+date: 2025-10-31
+toc: true
+number-sections: true
+format:
+  html:
+    embed-resources: true
+knitr:
+  opts_chunk:
+    collapse: true
+---
+
+
+```{r}
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(targets)
+  library(tidyplots)
+  library(ggpubr)
+  library(here)
+  library(corrplot)
+  library(conflicted)
+})
+
+source(here("analysis/99_globals.R"))
+source(here("R/util.R"))
+
+conflicts_prefer(
+  dplyr::filter
+)
+
+tidyplots_options(
+  my_style = function(x) {
+    x %>%
+      adjust_font(fontsize = 10) %>%
+      adjust_theme_details(
+        plot.tag = element_text(size = tag_fontsize, face = "bold")
+      )
+  }
+)
+```
+
+```{r}
+tar_load(eigen,
+  store = here("results/R/principal_components")
+)
+```
+
+
+## Correlation heatmap and histogram
+
+```{r}
+tar_load(cor,
+  store = here("results/R/principal_components")
+)
+```
+
+```{r}
+cor_data <- cor %>%
+  {
+    .[which(lower.tri(.))] <- NA
+    diag(.) <- NA
+    .
+  } %>%
+  mtx2tibble() %>%
+  filter(!is.na(values)) %>%
+  rename(dataset1 = "gene", dataset2 = "samples")
+
+label_data <- data.frame(
+  dataset = unique(union(cor_data$dataset1, cor_data$dataset2)),
+  x = 1:22 - 0.3,
+  y = rev(1:22),
+  values = 0
+) %>%
+  mutate(
+    dataset = str_replace(dataset, "Stor", "Štor"),
+    dataset = str_replace(dataset, "Papez", "Papež")
+  )
+```
+
+```{r}
+cor_correlogram <- cor_data %>%
+  mutate(abs_values = abs(values)) %>%
+  mutate(
+    dataset1 = factor(dataset1),
+    dataset2 = factor(dataset2, levels = rev(unique(cor_data$dataset2)))
+  ) %>%
+  tidyplot(x = dataset1, y = dataset2, color = values, dodge_width = 0) %>%
+  add(
+    geom_tile(
+      fill = "white", color = "lightgrey", alpha = 0.4
+    )
+  ) %>%
+  add(
+    geom_point(
+      aes(size = abs_values)#, alpha = abs_values)
+    )
+  ) %>%
+  add(
+    geom_text(
+      aes(x = x, y = y, label = dataset),
+      data = label_data,
+      color = "black", hjust = 0, size = 2.4, angle = 0
+    )
+  ) %>%
+  adjust_colors(
+    colors_diverging_BuRd, limits = c(-1, 1)
+  ) %>%
+  add(
+    scale_size_continuous(
+      range = c(0.5, 1.5)
+    )
+  ) %>%
+  remove_x_axis() %>%
+  remove_y_axis() %>%
+  adjust_legend_title("$Spearman~rho$") %>%
+  add(coord_cartesian(clip = "off")) %>%
+  add(guides(alpha = "none", size = "none")) %>%
+  adjust_theme_details(
+    plot.margin = margin(t = 50, r = 40, l = 50),
+    legend.position = c(0.6, 0.9),
+    legend.title.position = "left",
+    legend.key.height = unit(3, "mm"),
+    legend.key.width = unit(2, "mm"),
+    legend.title = element_text(angle = 90, hjust = 0.5, size = base_fontsize),
+    legend.text = element_text(size = base_fontsize)
+  ) %>%
+  adjust_size(65, 65)
+
+cor_correlogram
+```
+
+```{r}
+# corrplot(
+#   cor,
+#   method = "ellipse",
+#   type = "lower",
+#   diag = FALSE
+# )
+```
+
+```{r}
+cor_histogram_data <- cor %>%
+  {
+    .[which(upper.tri(.))] <- NA
+    diag(.) <- NA
+    .
+  } %>%
+  mtx2tibble() %>%
+  filter(!is.na(values)) %>%
+  rename(dataset1 = "gene", dataset2 = "samples")
+
+cor_histogram <- cor_histogram_data %>%
+  tidyplot(x = values) %>%
+  add_histogram(bins = 40, alpha = 0.5) %>%
+  add_reference_lines(median(cor[cor < 0.99])) %>%
+  add(geom_rug()) %>%
+  adjust_x_axis_title("Spearman Correlation") %>%
+  adjust_y_axis_title("Frequency") %>%
+  adjust_x_axis(limits = c(0, 0.6)) %>%
+  adjust_padding(left = 0.2, right = 0.2) %>%
+  adjust_size(50, 40) %>%
+  adjust_font(fontsize = base_fontsize) %>%
+  adjust_theme_details(
+    plot.background = element_rect(fill = "transparent")
+  )
+
+cor_histogram
+```
+
+## PCA
+
+```{r}
+principal_components <- tar_read(
+  principal_components,
+  store = here("results/R/principal_components/")
+) %>%
+  {
+    pc_scores <<- .
+    .
+  } %>%
+  as_tibble(rownames = "gene") %>%
+  mutate(dummy = 1)
+
+loadings <- eigen$vectors %*% diag(sqrt(eigen$values))
+scale_factor <- max(abs(pc_scores)) / max(abs(loadings)) * 0.7
+loadings_df <- as.data.frame(loadings) %>%
+  `*`(scale_factor) %>%
+  set_names(paste0("PC", 1:22)) %>%
+  mutate(dummy = 1)
+
+# loadings_df$dataset <- datasets
+```
+
+```{r}
+pca_plot <- principal_components %>%
+  tidyplot(x = V1, y = V2, color = dummy) %>%
+  add_reference_lines(x = 0, y = 0) %>%
+  add_data_points(alpha = 0.1, size = 0.2) %>%
+  add(
+    geom_segment(
+      aes(x = 0, y = 0, xend = PC1, yend = PC2),
+      data = loadings_df, color = "black", linewidth = 0.2, alpha = 0.7,
+      arrow = arrow(length = unit(0.2, "cm"))
+    )
+  ) %>%
+  adjust_colors(colors_discrete_friendly[1]) %>%
+  add(coord_fixed()) %>%
+  adjust_x_axis(
+    breaks = 0,
+    limits = c(-2e4, 2e4)
+  ) %>%
+  adjust_y_axis(
+    breaks = 0,
+    limits = c(-1.4e4, 1.4e4)
+  ) %>%
+  adjust_x_axis_title("PC1") %>%
+  adjust_y_axis_title("PC2") %>%
+  adjust_font(fontsize = base_fontsize) %>%
+  remove_legend() %>%
+  # remove_x_axis_line() %>%
+  # remove_y_axis_line() %>%
+  remove_x_axis_ticks() %>%
+  remove_y_axis_ticks() %>%
+  adjust_size(40, 30)
+
+pca_plot
+```
+
+## Scree plot
+
+```{r}
+vars_explained <- data.frame(
+  pc = seq_along(eigen$values),
+  vars = (eigen$values / sum(eigen$values)) * 100
+) %>%
+  mutate(
+    cumulative = cumsum(vars)
+  )
+```
+
+```{r}
+scree_plot <- vars_explained %>%
+  mutate(pc = factor(pc)) %>%
+  select(-cumulative) %>%
+  tidyplot(x = pc, y = vars, labels = vars) %>%
+  add_sum_bar(saturation = 0.7) %>%
+  # add_sum_line(linewidth = 1) %>%
+  add_sum_value(
+    data = max_rows(vars, 1),
+    fontsize = 10, hjust = 0.1
+  ) %>%
+  adjust_x_axis(
+    breaks = c(1, seq(5, 22, 5)),
+    limits = c(0.5, 22.5)
+  ) %>%
+  adjust_y_axis(
+    breaks = seq(0, 30, 5),
+    limits = c(0, 30),
+    padding = c(0, 0.1)
+  ) %>%
+  adjust_x_axis_title("Principal Components") %>%
+  adjust_y_axis_title("% Explained Variance") %>%
+  adjust_font(fontsize = base_fontsize) %>%
+  adjust_size(70, 40)
+
+scree_plot
+```
+
+## SD density
+
+```{r}
+tar_load(stds, store = here("results/R/principal_components"))
+```
+
+```{r}
+stds_plot_data <- stds %>%
+  select(gene, metric, dataset) %>%
+  group_by(dataset) %>%
+  mutate(standardized_metric = scale(metric)) %>%
+  mutate(
+    dataset = str_replace(dataset, "Stor", "Štor"),
+    dataset = str_replace(dataset, "Papez", "Papež")
+  )
+
+stds_plot_data %>%
+  tidyplot(x = metric, color = dataset) %>%
+  add(stat_density(
+    geom = "line", position = "identity", alpha = 0.3
+  )) %>%
+  # add(scale_color_discrete(colors_discrete_friendly)) %>%
+  adjust_colors(colors_discrete_friendly[1]) %>%
+  # adjust_x_axis(limits = c(0, NA)) %>%
+  # adjust_y_axis(limits = c(0, NA)) %>%
+  remove_legend() %>%
+  adjust_x_axis_title("SD") %>%
+  adjust_y_axis_title("Density") %>%
+  adjust_font(fontsize = base_fontsize) %>%
+  add(
+    scale_x_continuous(limits = c(0, NA), expand = expansion(c(0, 0.1)))
+  ) %>%
+  add(
+    coord_cartesian(xlim = c(0, 1))
+  )
+```
+
+```{r}
+dataset_order <- stds_plot_data$dataset %>% unique()
+stds_ridge_plot <- stds_plot_data %>%
+  mutate(dataset = factor(dataset)) %>%
+  tidyplot(x = metric, y = dataset)  %>%
+  add(
+    ggridges::geom_density_ridges2(scale = 1, alpha = 0.2, linewidth = 0.3)
+  ) %>%
+  reorder_y_axis_labels(rev(dataset_order)) %>%
+  remove_y_axis_title() %>%
+  add(
+    scale_x_continuous(limits = c(0, NA), expand = expansion(c(0, 0.1)))
+  ) %>%
+  add(
+    coord_cartesian(xlim = c(0, .75))
+  ) %>%
+  adjust_x_axis_title("SD") %>%
+  adjust_font(fontsize = base_fontsize) %>%
+  adjust_size(32, 65) %>%
+  remove_y_axis_line() %>%
+  remove_y_axis_ticks() %>%
+  adjust_theme_details(
+    axis.ticks.x = element_line(linewidth = 0.3),
+    axis.ticks.length = unit(1, "mm")
+  )
+stds_ridge_plot
+```
+
+```{r}
+stds_plot_data %>%
+  tidyplot(x = metric, y = dataset) %>%
+  add_violin() %>%
+  add(
+    scale_x_continuous(limits = c(0, NA), expand = expansion(c(0, 0.1)))
+  ) %>%
+  add(
+    coord_cartesian(xlim = c(0, .75))
+  )
+```
+
+```{r}
+tibble(
+  x = c(rep("A", 5), rep("b", 5)),
+  y = c(rnorm(5, 5), rnorm(5, 2))
+) %>%
+  tidyplot(x = x, y = y) %>%
+  add_mean_bar() %>%
+  add_sem_errorbar() %>%
+  add(
+    stat_compare_means(method = "t.test")
+  )
+```
+
+```{r}
+rank_sd_data <- stds %>%
+  group_by(dataset) %>%
+  mutate(
+    metric_rank = max(metric_rank) + 1 - metric_rank
+  )
+
+rank_sd_plot <- rank_sd_data %>%
+  tidyplot(y = metric, x = metric_rank) %>%
+  add_data_points(size = 0.05, rasterize = TRUE, rasterize_dpi = 150) %>%
+  add(scale_x_reverse(
+    breaks = c(1, 5000, 10000)
+  )) %>%
+  add(scale_y_continuous(
+    limits = c(0, NA), breaks = c(0, 1, 2, 3, 4), expand = expansion(c(0, 0.1))
+  )) %>%
+  adjust_y_axis() %>%
+  adjust_size(150, 140) %>%
+  adjust_y_axis_title("Standard deviation") %>%
+  adjust_x_axis_title("Rank") %>%
+  ggpubr::facet("dataset", scales = "free_x") %>%
+  add(theme_bw()) %>%
+  adjust_theme_details(
+    panel.grid = element_blank()
+  )
+
+
+
+ggsave(
+  here("plots/manuscript/supplementary/rank_sd_plot.pdf"),
+  width = 6.8, height = 6.8,
+  plot = rank_sd_plot
+)
+```
+
+
+## Gene rank plot
+
+```{r}
+tar_load(first_pc, store = here("results/R/principal_components/"))
+
+tar_load(rank_matrix, store = here("results/R/principal_components"))
+```
+
+```{r}
+top_bottom_genes <- bind_rows(
+  head(first_pc, n = 5),
+  tail(first_pc, n = 5)
+)
+
+# rank_data <- rank_matrix %>%
+#   as_tibble(rownames = "gene") %>%
+#   pivot_longer(-gene, names_to = "dataset", values_to = "rank") %>%
+#   filter(gene %in% top_bottom_genes$gene) %>%
+#   ggplot(aes(x = rank, color = gene)) +
+#   stat_ecdf(geom = "step")
+# rank_data
+
+rank_ecdf_data <- rank_matrix %>%
+  as_tibble(rownames = "gene") %>%
+  pivot_longer(-gene, names_to = "dataset", values_to = "rank") %>%
+  filter(gene %in% top_bottom_genes$gene) %>%
+  # The rank matrix sorts lowest variability first -> invert for consistency
+  # with final results.
+  mutate(
+    gene = factor(gene, levels = top_bottom_genes$gene),
+    rev_rank = (max(rank) + 1) - rank
+  )
+
+rank_ecdf_plot <- rank_ecdf_data %>%
+  tidyplot(x = rev_rank, color = gene) %>%
+  add(
+    stat_ecdf(geom = "step", alpha = 0.7)
+  ) %>%
+  add(
+    geom_label(
+      aes(x = x, y = y, label = gene),
+      fill = "transparent",
+      border.color = "transparent",
+      data = tribble(
+        ~x, ~y, ~gene,
+        7800, 0.7, "Snip1",
+        8000, 0.6, "Snap29",
+        8200, 0.5, "Ist1",
+        8400, 0.4, "Ogfod1",
+        8600, 0.3, "Lins1",
+        -500, 0.5, "S100a4",
+        -500, 0.4, "Fn1",
+        -500, 0.3, "LOC100763833",
+        -300, 0.2, "Serpinf1",
+        -200, 0.1, "LOC100760951"
+      ),
+      hjust = 0,
+      size = 3,
+      fontface = "italic"
+    )
+  ) %>%
+  add(
+    geom_label(
+      aes(x = x, y = y, label = gene),
+      fill = "transparent",
+      color = "black",
+      border.color = "transparent",
+      data = tribble(
+        ~x, ~y, ~gene,
+        7600, 0.8, "Least var.",
+        -500, 0.6, "Most var."
+      ),
+      hjust = 0,
+      size = 3,
+      fontface = "bold"
+    )
+  ) %>%
+  adjust_colors(colors_discrete_alger) %>%
+  adjust_x_axis_title("Gene PC1 rank") %>%
+  adjust_y_axis_title("ECDF") %>%
+  adjust_font(fontsize = base_fontsize) %>%
+  adjust_size(40, 40) %>%
+  remove_legend() %>%
+  add(scale_x_reverse(
+    breaks = c(1, 5000, 9920)
+  )) %>%
+  add(scale_y_continuous(
+    limits = c(0, 1), expand = expansion(c(0, 0))
+  )) %>%
+  add(coord_cartesian(
+    clip = "off"
+  ))
+
+rank_ecdf_plot
+```
+
+Are there differences in the "consistency" of the dataset-level ranks and global
+ranking between high and low variability genes? It does look like high
+variablility genes are more consistent.
+
+```{r}
+# MAD approach
+rank_ecdf_data %>%
+  group_by(gene) %>%
+  summarise(mad = mad(rev_rank))
+
+# AUC approach
+calculate_auc <- function(ranks, max_rank) {
+  x <- sort(ranks)
+  y <- rev(1:22 / 22)
+  max_area <- y[1] * max_rank
+
+  area <- 0
+  area <- x[1] - 1
+  for (i in seq_along(y)) {
+    if (i == length(y)) {
+      # We reaced the last one; y = 0 from here on -> no area
+      next
+    }
+    x_segment <- x[i + 1] - x[i]
+    y_fraction <- y[i + 1]
+    partial_area <- x_segment * y_fraction
+    area <- area + partial_area
+  }
+  auc <- area / max_area
+  return(auc)
+}
+
+max_rank <- length(first_pc$gene)
+rank_ecdf_data %>%
+  group_by(gene) %>%
+  summarise(auc = calculate_auc(rev_rank, max_rank)) %>%
+  mutate(`1-auc` = 1 - auc) %>%
+  mutate(measure = ifelse(auc > 0.5, auc, `1-auc`)) %>%
+  mutate(type = c(rep("stable", 5), rep("variable", 5))) %>%
+  tidyplot(x = type, y = measure, color = type) %>%
+  add_data_points_beeswarm() %>%
+  adjust_y_axis(limits = c(0.8, 1)) %>%
+  add_mean_dash() %>%
+  add_sem_errorbar() %>%
+  adjust_title("ECDF AUCs") %>%
+  adjust_x_axis_title("Top/least five genes") %>%
+  adjust_y_axis_title("AUC/1-AUC")
+```
+
+## Figure
+
+```{r}
+std_correlogram_panel <-
+  (stds_ridge_plot %>% add(labs(tag = "a"))) -
+  (cor_correlogram %>% add(labs(tag = "b"))) &
+  theme(plot.margin = margin(r = 10))
+
+scree_ecdf_panel <-
+  (scree_plot  %>% add(labs(tag = "d"))) -
+  (rank_ecdf_plot %>% add(labs(tag = "f")))
+
+svglite::svglite(
+  here("plots/manuscript/correlations_pca.svg"),
+  width = 6.5, height = measurements::conv_unit(14, "cm", "in")
+)
+# cairo_pdf(
+#   here("plots/manuscript/correlations_pca.pdf"),
+#   width = 6.5, height = measurements::conv_unit(14, "cm", "in")
+# )
+
+vp1 <- grid::viewport(
+  just = c("left", "bottom"),
+  default.units = "mm",
+  x = -16,
+  y = 30
+  # width = 50,
+  # height = 80
+)
+std_correlogram_panel %>%
+  print(vp = vp1)
+
+vp2 <- grid::viewport(
+  just = "center",
+  x = unit(138, "mm"), y = unit(118, "mm"),
+  width = unit(45, "mm"), height = unit(35, "mm")
+)
+(
+  cor_histogram[[1]] +
+    labs(tag = "c") +
+    theme(plot.tag.position = c(0.02, 1.04))
+) %>%
+  print(vp = vp2)
+
+vptest <- grid::viewport(
+  x = 70,
+  y = 30,
+  height = 0, width = 0,
+  just = c("left", "bottom"),
+  default.units = "mm"
+)
+scree_ecdf_panel %>%
+  print(vp = vptest)
+
+# vp3 <- grid::viewport(
+#   just = c("left", "bottom"),
+#   x = unit(5, "mm"), y = unit(2, "mm"),
+#   width = unit(80, "mm"), height = unit(55, "mm")
+# )
+# (
+#   scree_plot[[1]] +
+#     labs(tag = "d") +
+#     theme(plot.tag.position = c(-0.02, 1.07))
+# ) %>%
+#   print(vp = vp3)
+
+vp4 <- grid::viewport(
+  just = c("left", "bottom"),
+  x = unit(33, "mm"), y = unit(20, "mm"),
+  width = unit(45, "mm"), height = unit(35, "mm")
+)
+(
+  pca_plot[[1]] + labs(tag = "e") +
+    theme(plot.tag.position = c(0, 1))
+) %>%
+  print(vp = vp4)
+
+# vp5 <- grid::viewport(
+#   just = c("left", "bottom"),
+#   x = unit(90, "mm"), y = unit(5, "mm"),
+#   width = unit(50, "mm"), height = unit(55, "mm")
+# )
+# (
+#   rank_ecdf_plot[[1]] + labs(tag = "f") +
+#     theme(plot.tag.position = c(0, 1))
+# ) %>%
+#   print(vp = vp5)
+
+invisible(dev.off())
+```

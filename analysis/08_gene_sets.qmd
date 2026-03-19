@@ -1,0 +1,501 @@
+---
+title: Gene Sets
+author: Markus Riedl
+date: "`r Sys.Date()`"
+toc: true
+number-sections: true
+format:
+  html:
+    embed-resources: true
+knitr:
+  opts_chunk:
+    collapse: true
+---
+
+# Setup
+
+```{r}
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(targets)
+  library(tidyplots)
+  library(ggpubr)
+  library(conflicted)
+  library(here)
+  library(patchwork)
+  library(clusterProfiler)
+})
+
+source(here("analysis/99_globals.R"))
+tar_source(here("R"))
+
+conflicts_prefer(
+  dplyr::select,
+  dplyr::filter,
+  dplyr::rename
+)
+```
+
+```{r}
+tar_load(housekeeping_genes, store = here("results/R/gene_sets"))
+tar_load(brown_housekeeping_genes, store = here("results/R/gene_sets"))
+tar_load(essential_genes, store = here("results/R/gene_sets"))
+tar_load(first_pc, store = here("results/R/principal_components/"))
+
+tar_load(geneset_data, store = here("results/R/gene_sets"))
+
+tidyplots_options(
+  my_style = function(x) {
+    x %>% adjust_theme_details(
+      plot.tag = element_text(face = "bold", size = tag_fontsize)
+    )
+  }
+)
+```
+
+# Decile bins
+
+```{r}
+bin_sizes <- first_pc %>%
+  group_by(decile) %>%
+  summarise(n = n()) %>%
+  pull(n)
+max_rank <- max(first_pc$rank)
+```
+
+```{r}
+geneset_plotdata <- geneset_data %>%
+  dplyr::select(gene, hk_rank, ess_rank, brown_hk_rank) %>%
+  dplyr::rename(hk = hk_rank, ess = ess_rank, brown_hk = brown_hk_rank) %>%
+  pivot_longer(-gene, names_to = "geneset", values_to = "rank") %>%
+  dplyr::filter(!is.na(rank)) %>%
+  mutate(geneset = factor(geneset,
+    levels = c("hk", "ess", "brown_hk")
+  ))
+```
+
+```{r}
+plot_deciles <- function(df, filter, name, rug = TRUE) {
+  lab_x_pos <- cumsum(bin_sizes) - bin_sizes[1] / 2
+  lab_x_pos[10] <- lab_x_pos[10] + 80
+  df %>%
+    tidyplot(x = rank, color = geneset) %>%
+    add(
+      geom_histogram(
+        data = filter_rows({{ filter }}),
+        color = "grey40", alpha = 0.5,
+        linewidth = 0.3,
+        breaks = c(1, cumsum(bin_sizes))
+      )
+    ) %>%
+    add(
+      scale_y_continuous(expand = expansion(mult = c(0, 0.1)))
+    ) %>%
+    add(
+      scale_x_reverse(
+        breaks = lab_x_pos,
+        labels = 1:10
+        # limits = c(1, 9920),
+        # expand = expansion(mult = c(0.1, 0.1))
+      )
+    ) %>%
+    adjust_size(40, 30) %>%
+    adjust_x_axis_title("Rank decile") %>%
+    adjust_y_axis_title(name) %>%
+    remove_x_axis_ticks() %>%
+    adjust_colors(colors_discrete_friendly) %>%
+    adjust_font(fontsize = 8) %>%
+    remove_legend() %>%
+    add(
+      coord_cartesian(xlim = c(1, 10000))
+    ) %>%
+    adjust_theme_details(
+      axis.text.x = element_text(hjust = 0.5)
+    )
+}
+```
+
+```{r, include = FALSE, eval = FALSE}
+james_rug <- first_pc %>%
+  mutate(gene = gene) %>%
+  left_join(david_james_hk, by = "gene") %>%
+  filter(dj_hkg) %>%
+  mutate(dataset = "Brown et al.") %>%
+  tidyplot(x = rank, y = dataset) %>%
+  add(
+    geom_linerange(
+      aes(
+        x = rank,
+        ymin = 0,
+        ymax = 2
+      )
+    )
+  ) %>%
+  add(
+    ggrepel::geom_text_repel(
+      aes(label = gene),
+      direction = "x",
+      nudge_x = 100,
+      nudge_y = 1.2,
+      min.segment.length = Inf,
+      angle = 90,
+      hjust = 0,
+      box.padding = 0.2,
+      xlim = c(-Inf, Inf),
+      ylim = c(-Inf, Inf),
+      vjust = 0,
+      size = 2.5,
+      color = "black"
+    )
+  ) %>%
+  add(
+    scale_x_reverse(expand = expansion(0.1, 0.1))
+  ) %>%
+  adjust_size(40, 6) %>%
+  adjust_y_axis(limits = c(0, 4)) %>%
+  remove_x_axis() %>%
+  remove_y_axis_line() %>%
+  remove_y_axis_ticks() %>%
+  remove_y_axis_title() %>%
+  add(coord_cartesian(clip = "off")) %>%
+  adjust_theme_details(
+    plot.margin = margin(t = 40)
+  )
+```
+
+```{r}
+housekeeper_plot <- geneset_plotdata %>%
+  mutate(
+    gene2 = str_to_sentence(gene)
+  ) %>%
+  plot_deciles(geneset == "hk", "# housekeeping genes") %>%
+  add(
+    geom_rect(
+      aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+      data = tribble(
+        ~xmin, ~xmax, ~ymin, ~ymax,
+        7000, 4400, 40, 190,
+        10300, 7900, 40, 210,
+        2400, 800, 40, 180
+      ),
+      fill = "grey90",
+      color = NULL,
+      alpha = 0.3,
+      inherit.aes = FALSE
+    )
+  ) %>%
+  add(
+    geom_rug(
+      data = filter_rows(geneset == "brown_hk"),
+      color = "red",
+      length = unit(0.2, "cm")
+    )
+  ) %>%
+  add(
+    ggrepel::geom_text_repel(
+      aes(y = 0, label = gene2),
+      data = filter_rows(geneset == "brown_hk"),
+      direction = "x",
+      color = "grey10",
+      alpha = 1,
+      # bg.color = "black",
+      # bg.r = 0.1,
+      force_pull = 0,
+      nudge_y = 40,
+      hjust = 0,
+      vjust = 0.5,
+      box.padding = 0.05,
+      angle = 90,
+      min.segment.length = Inf,
+      size = 2.3
+    )
+  ) %>%
+  add(labs(tag = "a"))
+
+essential_plot <- geneset_plotdata %>%
+  plot_deciles(geneset == "ess", "# essential genes") %>%
+  add(labs(tag = "d"))
+
+housekeeper_plot - essential_plot
+```
+
+
+# PCA
+
+```{r}
+tar_load(principal_components, store = here("results/R/principal_components"))
+```
+
+```{r}
+pc_data <- principal_components %>%
+  as_tibble(rownames = "gene") %>%
+  dplyr::select(gene, V1, V2) %>%
+  mutate(gene = gene) %>%
+  left_join(data.frame(gene = housekeeping_genes, hk = TRUE), by = "gene") %>%
+  # left_join(david_james_hk %>% mutate(gene = toupper(gene)), by = "gene") %>%
+  left_join(
+    data.frame(gene = essential_genes, ess = TRUE), by = "gene"
+  )
+```
+
+```{r}
+plot_pca <- function(df, filter, col) {
+  df %>%
+    tidyplot(x = V1, y = V2) %>%
+    add_reference_lines(x = 0, y = 0) %>%
+    add(
+      geom_density2d(color = "grey70")
+    ) %>%
+    add(
+      geom_density2d(
+        data = filter_rows({{ filter }}),
+        color = colors_discrete_friendly[col]
+      )
+    ) %>%
+    adjust_x_axis_title("PC1") %>%
+    adjust_y_axis_title("PC2") %>%
+    adjust_x_axis(breaks = 0) %>%
+    adjust_y_axis(breaks = 0) %>%
+    add(coord_fixed()) %>%
+    adjust_theme_details(
+      plot.tag.position = c(0, 1.13)
+    )
+}
+```
+
+```{r}
+hk_pca <- pc_data %>%
+  plot_pca(!is.na(hk), 1) %>%
+  add(labs(tag = "b"))
+
+ess_pca <- pc_data %>%
+  plot_pca(!is.na(ess), 3) %>%
+  add(labs(tag = "e"))
+
+hk_pca - ess_pca
+```
+
+
+# Decile 10 housekeeping genes
+
+
+```{r}
+p_data <- geneset_data %>%
+  dplyr::select(gene, decile, housekeeper) %>%
+  distinct() %>%
+  mutate(
+    in_decile = decile == 10,
+    in_hk = !is.na(housekeeper)
+  )
+
+in_decile <- p_data$in_decile
+in_hk <- p_data$in_hk
+
+contingency_table <- table(in_decile, in_hk)
+
+housekeeper_dec10_results <- fisher.test(
+  contingency_table, alternative = "greater"
+)
+
+saveRDS(housekeeper_dec10_results,
+  here("results/gene_sets/housekeeper_dec10_results.rds")
+)
+```
+
+## Functional Enrichment
+
+```{r}
+tar_load(consensus_hk_gobp, store = here("results/R/gene_sets/"))
+```
+
+```{r}
+goplot_data <- consensus_hk_gobp %>%
+  as.data.frame() %>%
+  dplyr::select(-geneID) %>%
+  mutate(
+    gene_pct = map_dbl(GeneRatio, (\(x) eval(parse(text = x)) * 100)),
+    log_p = -log10(p.adjust)
+  )
+
+y_axis_order <- goplot_data %>%
+  arrange(Count) %>%
+  pull(Description)
+
+goplot <- goplot_data %>%
+  tidyplot(x = gene_pct, y = Description, color = log_p) %>%
+  add(
+    geom_point(aes(size = Count), color = "grey30", shape = 21)
+  ) %>%
+  remove_y_axis_title() %>%
+  adjust_x_axis(limits = c(0, 15)) %>%
+  add(scale_x_continuous(expand = expansion(mult = c(0, 0.15)))) %>%
+  adjust_y_axis(
+    labels = scales::label_wrap(width = 30)
+  ) %>%
+  adjust_x_axis_title("% of genes") %>%
+  reorder_y_axis_labels(y_axis_order) %>%
+  adjust_size(30, 50) %>%
+  adjust_colors(
+    rev(colors_continuous_rocket),
+    limits = c(1, 6),
+    guide = guide_colorbar(
+      title = expression("-" * log[10] * "(" * italic(p)[adj] * ")"),
+      theme = theme(
+        legend.key.width = unit(15, "mm"),
+        legend.key.height = unit(3, "mm"),
+        legend.ticks = element_line(),
+        legend.frame = element_rect(colour = "black")
+      )
+    )
+  ) %>%
+  adjust_font(fontsize = 8) %>%
+  adjust_theme_details(
+    legend.position = c(0, -0.25),
+    legend.direction = "horizontal",
+    legend.box = "horizontal",
+    legend.box.spacing = unit(0, "mm"),
+    legend.title.position = "top",
+    legend.key.spacing = unit(1, "mm"),
+    legend.text = element_text(margin = margin(l = 0, t = 2, b = 2)),
+    legend.spacing.x = unit(1, "mm")
+  ) %>%
+  add(labs(tag = "c"))
+
+goplot
+```
+
+
+# Variable essential genes
+
+## Underrepresentation in first decile
+
+```{r}
+p_data <- geneset_data %>%
+  dplyr::select(gene, decile, essential) %>%
+  distinct() %>%
+  mutate(
+    in_decile = decile == 1,
+    is_ess = !is.na(essential)
+  )
+
+contingency_table <- table(p_data$in_decile, p_data$is_ess)
+
+essential_dec1_results <- fisher.test(
+  contingency_table, alternative = "less"
+)
+
+saveRDS(essential_dec1_results,
+  here("results/gene_sets/essential_dec1_results.rds")
+)
+```
+
+
+## Functional Enrichment
+
+```{r}
+tar_load(essential_genes_go)
+
+ess_go_sim <- clusterProfiler::simplify(essential_genes_go) %>%
+  enrichplot::pairwise_termsim(method = "JC")
+ess_go_sim
+
+ess_go_tree <- enrichplot::treeplot(
+  ess_go_sim,
+  fontsize = 2.5,
+  label_format_tiplab = 40,
+  label_format_cladelab = 20,
+  hilight.params = list(
+    hilight = FALSE
+  ),
+  cluster.param = list(
+    n = 4,
+    label_words_n = 4
+  ),
+  offset.params = list(
+    # bar_tree = rel(2),
+    bar_tree = 50,
+    tiplab = rel(0.2),
+    # hexpand = 0.5,
+    extend = 0.2
+  ),
+) +
+  ggtree::geom_tiplab(size = 2.5, lineheight = 0.8, angle = 90, hjust = 1) +
+  coord_fixed(clip = "off") +
+  ggtree::layout_dendrogram() +
+  theme(
+    legend.position = "bottom",
+    plot.margin = margin(t = -200),
+    axis.text = element_text(lineheight = -1)
+  )
+ess_go_tree$layers$geom_interactive_text_g_gtree...6 <- NULL
+ess_go_tree$layers$geom_interactive_point_g_gtree <- NULL
+ess_go_tree$layers$geom_interactive_text_g_gtree$aes_params$hjust <- 0.5
+ess_go_tree$layers$geom_interactive_text_g_gtree$aes_params$vjust <- 1.1
+# ess_go_tree$layers$geom_interactive_text_g_gtree$aes_params$angle <- 15
+ess_go_tree <- ess_go_tree + plot_layout(
+  widths = unit(180, "mm"), heights = unit(75, "mm")
+)
+
+ggsave(
+  "plots/gene_sets/essential_go_tree.pdf",
+  plot = ess_go_tree,
+  width = 180, height = 80, units = "mm"
+)
+```
+
+
+# Figure
+
+
+```{r}
+pdf(
+  here("plots/manuscript/gene_sets.pdf"),
+  width = measurements::conv_unit(180, "mm", "in"),
+  height = measurements::conv_unit(86, "mm", "in")
+)
+
+vp1 <- grid::viewport(
+  just = c("left", "bottom"), default.units = "mm",
+  x = 4, y = 3, width = 50, height = 40
+)
+essential_plot[[1]] %>%
+  print(vp = vp1)
+
+vp2 <- grid::viewport(
+  just = c("left", "bottom"), default.units = "mm",
+  x = 4, y = 45, width = 50, height = 40
+)
+housekeeper_plot[[1]] %>%
+  print(vp = vp2)
+
+vp3 <- grid::viewport(
+  just = c("left", "bottom"), default.units = "mm",
+  x = 55, y = 45, width = 50, height = 40
+)
+hk_pca[[1]] %>%
+  print(vp = vp3)
+
+vp4 <- grid::viewport(
+  just = c("left", "bottom"), default.units = "mm",
+  x = 55, y = 2, width = 50, height = 40
+)
+ess_pca[[1]] %>%
+  print(vp = vp4)
+
+vp5 <- grid::viewport(
+  just = c("left", "bottom"), default.units = "mm",
+  x = 105, y = 15, width = 70, height = 70
+)
+goplot[[1]] %>%
+  print(vp = vp5)
+
+dev.off()
+```
+
+```{r}
+ggsave(
+  "plots/manuscript/supplementary/essential_go_tree.pdf",
+  plot = ess_go_tree,
+  width = 180, height = 80, units = "mm"
+)
+```

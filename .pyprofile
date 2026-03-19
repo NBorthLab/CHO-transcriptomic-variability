@@ -1,0 +1,35 @@
+# vim: ft=python syntax=python
+
+def _debug_snakemake(input = {}, output = {}, params = {}):
+
+    from snakemake.script import Snakemake
+    from snakemake.io import (
+        InputFiles,
+        Log,
+        OutputFiles,
+        Params,
+        Wildcards,
+        Resources
+    )
+
+    _input = InputFiles(fromdict = input)
+    _output = OutputFiles(fromdict = output)
+    _params = Params(fromdict = params)
+    # TODO: Read the actual config here
+    _config = {}
+
+    snakemake = Snakemake(
+        _input,
+        _output,
+        _params,
+        Wildcards(),
+        1,
+        Resources(),
+        Log(),
+        _config,
+        rulename = "",
+        bench_iteration = 0
+    )
+
+    return snakemake
+

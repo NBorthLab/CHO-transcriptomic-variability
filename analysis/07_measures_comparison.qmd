@@ -1,0 +1,273 @@
+---
+title: Measures comparison
+author: Markus Riedl
+date: "`r Sys.Date()`"
+toc: true
+number-sections: true
+format:
+  html:
+    embed-resources: true
+knitr:
+  opts_chunk:
+    collapse: true
+---
+
+
+```{r}
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(targets)
+  library(tidyplots)
+  library(ggpubr)
+  library(here)
+  library(conflicted)
+  library(corrplot)
+  library(SummarizedExperiment)
+  library(measurements)
+  library(gt)
+  library(patchwork)
+})
+
+source(here("analysis/99_globals.R"))
+source(here("R/util.R"))
+
+conflicts_prefer(
+  dplyr::filter,
+  base::setdiff
+)
+```
+
+
+```{r}
+ranks_corr <- tar_read(ranks_corr,
+  store = here("results/R/measures_comparison")
+)
+tar_load(combined_df, store = here("results/R/measures_comparison"))
+```
+
+## Correlation between measures
+
+```{r, include = FALSE}
+correlation_plot <- {
+  corrplot(
+    ranks_corr,
+    method = "number",
+    type = "lower",
+    # diag = FALSE,
+    cl.length = 5,
+    cl.ratio = 0.2,
+    tl.srt = 45
+  )
+
+  recordPlot()
+}
+
+# pdf(
+#   here("plots/manuscript/measures_correlations.pdf"),
+#   width = conv_unit(100, "mm", "in"), height = conv_unit(80, "mm", "in")
+# )
+# replayPlot(correlation_plot)
+# dev.off()
+```
+
+```{r}
+correlation_plot <- ranks_corr %>%
+  as_tibble(rownames = "measure1") %>%
+  pivot_longer(-measure1, names_to = "measure2", values_to = "value") %>%
+  mutate(value = round(value, 2)) %>%
+  # mutate(value = case_when(measure1 == measure2 ~ NA, TRUE ~ value)) %>%
+  filter(!measure1 == measure2) %>%
+  filter(measure1 != "Entropy") %>%
+  filter(measure2 != "SD") %>%
+  tidyplot(x = measure1, y = measure2, color = value, dodge_width = 0) %>%
+  # add_heatmap() %>%
+  adjust_colors(colors_diverging_BuYlRd, limits = c(-1, 1)) %>%
+  add_data_labels(
+    label = value,
+    dodge_width = 0,
+    label_position = "center",
+    fontsize = 10
+  ) %>%
+  adjust_legend_title("Correlation") %>%
+  # adjust_font(fontsize = 12) %>%
+  remove_x_axis_title() %>%
+  remove_y_axis_title() %>%
+  reorder_x_axis_labels(c("SD", "LOESS", "Entropy")) %>%
+  reorder_y_axis_labels(rev(c("SD", "LOESS", "Entropy"))) %>%
+  # remove_legend() %>%
+  adjust_size(20, 20) %>%
+  add(labs(tag = "a")) %>%
+  adjust_theme_details(
+    legend.position = c(0.2, -0.5),
+    legend.direction = "horizontal",
+    plot.tag.position = c(0, 1.08),
+    plot.margin = margin(r = 30),
+    axis.text.x = element_text(margin = margin(b = 30))
+  )
+  # save_plot(here("plots/manuscript/measures_correlations.pdf"))
+
+correlation_sd_loess <- combined_df %>%
+  tidyplot(x = SD, y = LOESS) %>%
+  add_data_points(
+    alpha = 0.2, size = 0.1, rasterize = TRUE, rasterize_dpi = 150
+  ) %>%
+  adjust_x_axis_title("SD rank") %>%
+  adjust_y_axis_title("LOESS rank") %>%
+  adjust_size(30, 30) %>%
+  add(labs(tag = "b"))
+
+correlation_sd_entropy <- combined_df %>%
+  tidyplot(x = SD, y = Entropy) %>%
+  add_data_points(
+    alpha = 0.2, size = 0.1, rasterize = TRUE, rasterize_dpi = 150
+  ) %>%
+  adjust_x_axis_title("SD rank") %>%
+  adjust_y_axis_title("Entropy rank") %>%
+  adjust_size(30, 30) %>%
+  add(labs(tag = "c"))
+
+(correlation_panels <- free(correlation_plot) +
+  correlation_sd_loess +
+  correlation_sd_entropy
+)
+```
+
+
+## Visualization of LOESS
+
+```{r}
+loess_data <- tar_read(
+  loess_residuals_Papez,
+  store = here("results/R/loess_residuals")
+)
+```
+
+```{r}
+p1 <- loess_data %>%
+  tidyplot(x = mean, y = cv) %>%
+  add_data_points(
+    alpha = 0.2, size = 0.1, rasterize = TRUE, rasterize_dpi = 150
+  ) %>%
+  add(geom_smooth(
+    formula = y ~ x,
+    color = "red", method = "loess", span = 0.75,
+    method.args = list(degree = 1)
+  )) %>%
+  adjust_x_axis_title("Mean gene expression") %>%
+  adjust_y_axis_title("CV") %>%
+  adjust_x_axis(transform = "log10", breaks = c(10, 100, 1000)) %>%
+  adjust_y_axis(transform = "log2") %>%
+  adjust_size(30, 30) %>%
+  add(labs(tag = "d"))
+
+p2 <- loess_data %>%
+  tidyplot(x = mean, y = metric) %>%
+  add_data_points(
+    alpha = 0.2, size = 0.1, rasterize = TRUE, rasterize_dpi = 150
+  ) %>%
+  add(geom_smooth(
+    formula = y ~ x,
+    color = "red",
+    method = "loess", span = 0.75,
+    method.args = list(degree = 1)
+  )) %>%
+  adjust_x_axis(transform = "log10", breaks = c(10, 100, 1000)) %>%
+  adjust_x_axis_title("Mean gene Expression") %>%
+  adjust_y_axis_title("Residuals") %>%
+  adjust_size(30, 30) %>%
+  add(labs(tag = "e"))
+
+loess_residuals_panels <- p1 - p2
+```
+
+## Why is Shannon Entropy not appropriate?
+
+```{r}
+tar_load(gene_specificity_Dhiman, store = here("results/R/shannon_entropy/"))
+tar_load(std_Dhiman, store = here("results/R/principal_components/"))
+tar_load(logcpm_Dhiman, store = here("results/R/shannon_entropy/"))
+```
+
+```{r}
+dhiman_data <- full_join(
+  std_Dhiman, gene_specificity_Dhiman,
+  by = join_by(gene, dataset), suffix = c("_std", "_entropy")
+) %>%
+  mutate(diff = abs(metric_rank_entropy - metric_rank_std)) %>%
+  arrange(desc(diff))
+
+dhiman_gene_subset <- head(dhiman_data, n = 5) %>% pull(gene)
+
+dhiman_metrics <- dhiman_data %>%
+  tidyplot(x = metric_std, y = metric_entropy) %>%
+  add_data_points(
+    alpha = 0.2, size = 0.1, rasterize = TRUE, rasterize_dpi = 150
+  ) %>%
+  add_data_points(
+    data = filter_rows(gene %in% dhiman_gene_subset),
+    color = "red", shape = 1, size = 1.4, alpha = 1
+  ) %>%
+  adjust_x_axis_title("SD") %>%
+  adjust_y_axis_title("Shannon entropy") %>%
+  adjust_size(30, 30) %>%
+  add(labs(tag = "f"))
+
+dhiman_ranks <- dhiman_data %>%
+  tidyplot(x = metric_rank_std, y = metric_rank_entropy) %>%
+  add_data_points(
+    alpha = 0.2, size = 0.1, rasterize = TRUE, rasterize_dpi = 150
+  ) %>%
+  add_data_points(
+    data = filter_rows(gene %in% dhiman_gene_subset),
+    color = "red", shape = 1, size = 1.4
+  ) %>%
+  adjust_x_axis_title("SD rank") %>%
+  adjust_y_axis_title("Entropy rank") %>%
+  adjust_size(30, 30) %>%
+  add(labs(tag = "g"))
+
+dhiman_density <- assay(logcpm_Dhiman) %>%
+  as_tibble(rownames = "gene") %>%
+  pivot_longer(-gene, names_to = "samples", values_to = "logcpm") %>%
+  mutate(dummy = NA) %>%
+  tidyplot(x = logcpm, color = dummy) %>%
+  add(
+    geom_density(
+      alpha = 0.3,
+      color = colors_discrete_friendly[1],
+      fill = colors_discrete_friendly[1]
+    )
+  ) %>%
+  add(
+    geom_rug(
+      data = filter_rows(gene %in% dhiman_gene_subset),
+      color = "red"
+    )
+  ) %>%
+  adjust_colors(colors_discrete_friendly[1]) %>%
+  remove_legend() %>%
+  adjust_x_axis_title("logCPM") %>%
+  adjust_y_axis_title("Density") %>%
+  adjust_theme_details(
+    plot.margin = margin(l = 15)
+  ) %>%
+  adjust_size(30, 30) %>%
+  add(labs(tag = "h"))
+
+(dhiman_panels <- dhiman_metrics - dhiman_ranks + dhiman_density)
+```
+
+## Figure
+
+```{r}
+figure <- correlation_panels /
+  loess_residuals_panels /
+  dhiman_panels
+
+ggsave(
+  here("plots/manuscript/measures_comparison.pdf"),
+  plot = figure,
+  width = 6,
+  height = 6
+)
+```

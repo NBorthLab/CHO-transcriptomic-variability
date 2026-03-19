@@ -1,0 +1,156 @@
+---
+title: Normalization and Transformation
+author: Markus Riedl
+date: "`r Sys.Date()`"
+toc: true
+number-sections: true
+format:
+  html:
+    embed-resources: true
+knitr:
+  opts_chunk:
+    collapse: true
+---
+
+```{r}
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(targets)
+  library(tidyplots)
+  library(ggpubr)
+  library(here)
+  library(corrplot)
+  library(conflicted)
+  library(DESeq2)
+  library(patchwork)
+})
+
+source(here("analysis/99_globals.R"))
+source(here("R/util.R"))
+
+conflicts_prefer(
+  dplyr::filter,
+  MatrixGenerics::rowMeans,
+  MatrixGenerics::rowSds,
+  base::setdiff
+)
+```
+
+## Disperions plot
+
+```{r}
+tar_load(ddss,
+  store = here("results/R/transformation/")
+)
+```
+
+```{r}
+datasets <- names(ddss)
+
+dispersion_data <- map2_dfr(ddss, datasets, function(x, y) {
+  data <- mcols(x)
+  data.frame(
+    dataset = y,
+    gene = rownames(data),
+    mean = data$baseMean,
+    dispFit = data$dispFit,
+    dispEst = data$dispGeneEst,
+    dispOutlier = data$dispOutlier,
+    dispersions = dispersions(x)
+  )
+}) %>%
+  mutate(
+    dataset = str_remove(dataset, "dds_")
+  )
+```
+
+```{r}
+(dispersions_plot <- dispersion_data %>%
+  ggplot() +
+  ggrastr::rasterise(geom_point(
+    aes(x = mean, y = dispEst),
+    alpha = 0.2, color = "black", size = 0.2
+  ),
+    dpi = 150, dev = "ragg"
+  ) +
+  ggrastr::rasterise(geom_point(
+    aes(x = mean, y = dispersions),
+    alpha = 0.2, color = "blue", size = 0.2
+  ),
+    dpi = 150, dev = "ragg"
+  ) +
+  ggrastr::rasterise(geom_point(
+    aes(x = mean, y = dispFit),
+    alpha = 0.8, color = "red", size = 0.2
+  ),
+    dpi = 150, dev = "ragg"
+  ) +
+  facet_wrap(~dataset) +
+  scale_x_continuous(transform = "log10") +
+  scale_y_continuous(transform = "log10") +
+  labs(
+    x = "Mean of normalized counts",
+    y = "Dispersion"
+  ) +
+  theme_border()
+)
+```
+
+```{r}
+ggsave(
+  here("plots/manuscript/supplementary/dispersions_plot.pdf"),
+  plot = dispersions_plot,
+  width = 190, height = 200, units = "mm"
+)
+```
+
+## Mean-SD plot
+
+```{r}
+tar_load(
+  vsds_nonblind,
+  store = here("results/R/transformation/")
+)
+```
+
+```{r}
+meansd_data <- vsds_nonblind %>%
+  map2_dfr(datasets, function(x, y) {
+    mat <- assay(x)
+    genes <- rownames(x)
+    means <- rowMeans(mat, na.rm = TRUE)
+    sds <- rowSds(mat, na.rm = TRUE)
+    ranks <- rank(means, na.last = FALSE, ties.method = "random")
+    data.frame(
+      genes = genes,
+      dataset = y,
+      means = means,
+      sds = sds,
+      ranks = ranks
+    )
+  }) %>%
+  mutate(dataset = str_remove(dataset, "dds_"))
+```
+
+```{r}
+(meansd_plot <- meansd_data %>%
+  ggplot() +
+  geom_hex(aes(x = ranks, y = sds), bins = 50) +
+  facet_wrap(~dataset, scales = "free") +
+  scale_x_continuous(breaks = c(1, 10000)) +
+  labs(
+    x = "Ranks of normalized mean counts",
+    y = "Standard deviation"
+  ) +
+  rremove("legend") +
+  theme_border()
+)
+```
+
+```{r}
+ggsave(
+  here("plots/manuscript/supplementary/meanSd_plot.pdf"),
+  plot = meansd_plot,
+  width = 190, height = 200, units = "mm"
+)
+```

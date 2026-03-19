@@ -1,0 +1,393 @@
+---
+title: Metadata and Loadings
+author: Markus Riedl
+date: "`r Sys.Date()`"
+toc: true
+number-sections: true
+format:
+  html:
+    embed-resources: true
+knitr:
+  opts_chunk:
+    collapse: true
+---
+
+
+```{r}
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(targets)
+  library(tidyplots)
+  library(ggpubr)
+  library(here)
+  library(corrplot)
+  library(conflicted)
+})
+
+source(here("analysis/99_globals.R"))
+source(here("R/util.R"))
+
+conflicts_prefer(
+  dplyr::filter
+)
+
+tidyplots_options(
+  my_style = function(x) {
+    x %>%
+      adjust_font(fontsize = base_fontsize) %>%
+      adjust_theme_details(
+        plot.tag = element_text(size = tag_fontsize, face = "bold")
+      )
+  }
+)
+```
+
+
+```{r}
+tar_load(metadata, store = here("results/R/preprocessing/"))
+tar_load(principal_components, store = here("results/R/principal_components"))
+tar_load(eigen, store = here("results/R/principal_components"))
+tar_load(loadings, store = here("results/R/principal_components"))
+
+datasets <- metadata$Dataset %>% unique()
+
+dataset_metadata <- read_csv(here("resources/datasets.csv"))
+
+dataset_metadata <- dataset_metadata %>%
+  select(dataset, cell, experimental_factor) %>%
+  separate(experimental_factor,
+    c("factor1", "factor2", "factor3", "factor4", "factor5")
+  ) %>%
+  pivot_longer(-c(dataset, cell), names_to = "tmp", values_to = "factor") %>%
+  filter(!is.na(factor)) %>%
+  select(-tmp) %>%
+  mutate(val = 1) %>%
+  pivot_wider(names_from = "factor", values_from = val, values_fill = 0)
+```
+
+Check that every experimental factor occurs at least twice.
+```{r}
+dataset_metadata %>%
+  summarise(across(-c(dataset, cell), ~sum(.)))
+```
+
+```{r}
+loadings_dfw <- loadings %>%
+  as.data.frame() %>%
+  set_names(paste0("PC", 1:22)) %>%
+  mutate(dataset = datasets) %>%
+  full_join(dataset_metadata, by = "dataset")
+
+loadings_dfl <- loadings_dfw %>%
+  pivot_longer(starts_with("PC"), names_to = "pc", values_to = "loading") %>%
+  mutate(pc = factor(pc, levels = str_sort(unique(pc), numeric = TRUE)))
+```
+
+```{r}
+plot_loadings <- function(data, factor) {
+  data %>%
+    tidyplot(x = pc, y = loading, color = {{ factor }}) %>%
+    add_data_points(alpha = 0.5, size = 3) %>%
+    adjust_colors(c("grey", "blue")) %>%
+    adjust_y_axis_title("Component loadings") %>%
+    adjust_size(NA, NA)
+}
+
+loadings_plot_data <- loadings_dfl %>%
+  filter(pc %in% paste0("PC", 1:5))
+
+# loadings_plot_data %>% plot_loadings(temperature)
+# loadings_plot_data %>% plot_loadings(productivity)
+# loadings_plot_data %>% plot_loadings(producer)
+# loadings_plot_data %>% plot_loadings(growth)
+# loadings_plot_data %>% plot_loadings(productivity)
+# loadings_plot_data %>% plot_loadings(timecourse)
+
+# Correlation here is essentially point-biserial correlation
+# For correlation of dichotomous (yes/no, 1/0, etc.) and numerical variables it
+# is mathematically exactly the same as Pearson correlation.
+correlation_res <- loadings_dfw %>%
+  rstatix::cor_test(
+    vars = paste0("PC", 2:5),
+    vars2 = c("productivity", "producer", "infection", "timecourse",
+      "temperature", "growth", "glutamine", "lactate"),
+    method = "pearson"
+  ) %>%
+  rstatix::adjust_pvalue(method = "BH")
+
+any(correlation_res$p.adj < 0.05)
+
+
+# WARN: Should I use the absolute correlation instead?
+# We can't ay for sure which correlation goes in which direction anyway.
+(correlation_plot <- correlation_res %>%
+  select(var1, var2, cor) %>%
+  mutate(cor = cor) %>%
+  tidyplot(x = var1, y = var2, color = cor, dodge_width = 0) %>%
+  add_heatmap() %>%
+  add_data_labels(label = cor, color = "black", label_position = "center") %>%
+  adjust_font(fontsize = 8) %>%
+  adjust_x_axis(rotate = 30) %>%
+  adjust_y_axis_title("Experimental factor") %>%
+  # adjust_colors(colors_diverging_blue2brown) %>%
+  # adjust_colors(colors_continuous_turbo) %>%
+  add(
+    scale_fill_continuous(
+      palette = c("blue", "white", "red"),
+      # palette = c("white", "red"),
+      limit = c(-1, 1),
+      breaks = c(-1, -0.5, 0, 0.5, 1)
+      # labels = c(-1, "", 0, "", 1)
+    )
+  ) %>%
+  add(labs(fill = "Point-biserial\ncorrelation")) %>%
+  remove_x_axis_title() %>%
+  adjust_size(40, 50) %>%
+  add(theme(
+    legend.frame = element_rect(colour = "black", linewidth = 0.2),
+    legend.key.height = unit(3.5, "mm"),
+    legend.key.width = unit(2.5, "mm")
+  ))
+)
+```
+
+
+# PCoA
+
+```{r}
+tar_load(cor, store = here("results/R/principal_components"))
+```
+
+Correlations to distance matrix
+$$
+D = 1 - \rho
+$$
+
+```{r}
+D <- 1 - cor
+```
+
+Perform Multi-Dimensional Scaling (aka Principal Coordinate Analysis)
+```{r}
+mds_data <- cmdscale(D, k = 2)
+
+# Alterantively with ape
+# (pcoa_data <- ape::pcoa(1 - cor))
+```
+
+```{r}
+mds_data_dfw <- mds_data %>%
+  as.data.frame() %>%
+  rownames_to_column("dataset") %>%
+  full_join(dataset_metadata, by = join_by(dataset)) %>%
+  mutate(
+    dataset = str_replace(dataset, "Stor", "Štor"),
+    dataset = str_replace(dataset, "Papez", "Papež")
+  ) %>%
+  mutate(
+    cell = case_when(cell == "k1" ~ "CHO-K1", cell == "s" ~ "CHO-S"),
+    productivity = factor(productivity),
+    infection = factor(infection),
+    producer = factor(producer),
+    timecourse = factor(timecourse),
+    temperature = factor(temperature),
+    growth = factor(growth),
+    glutamine = factor(glutamine),
+    lactate = factor(lactate)
+  )
+
+
+colors_discrete_friendly
+
+mds_data_dfw$dataset %>% abbreviate(minlength = 3)
+
+if (FALSE) {
+  mds_data_dfw %>%
+    mutate(dataset_label = abbreviate(dataset, minlength = 3)) %>%
+    mutate(
+      group = case_when(
+        timecourse == 1 | temperature == 1 ~ "timetemp",
+        growth == 1 ~ "growth",
+        TRUE ~ "other"
+      )
+    ) %>%
+    tidyplot(x = V1, y = V2, color = group) %>%
+    add_data_points() %>%
+    add_data_labels_repel(
+      label = dataset_label,
+      box.padding = 0.1
+    ) %>%
+    # add_data_points(
+    #   data = filter_rows(timecourse == 0 & temperature == 0 & growth == 0),
+    # ) %>%
+    # add_data_labels_repel(
+    #   label = dataset_label,
+    #   data = filter_rows(timecourse == 0 & temperature == 0 & growth == 0),
+    # ) %>%
+    # add_data_points(
+    #   data = filter_rows(timecourse == 1 | temperature == 1),
+    #   color = "blueviolet"
+    # ) %>%
+    # add_data_labels_repel(
+    #   label = dataset_label,
+    #   data = filter_rows(timecourse == 1 | temperature == 1),
+    #   color = "blueviolet"
+    # ) %>%
+    # add_data_points(
+    #   data = filter_rows(growth == 1),
+    #   color = "darkolivegreen4"
+    # ) %>%
+    adjust_x_axis_title("Principal Coordinate 1") %>%
+    adjust_y_axis_title("Principal Coordinate 2") %>%
+    # add_annotation_text(
+    #   "Time course/\nTemperature shift", Inf, -Inf,
+    #   color = "red", hjust = 1, vjust = -0.2
+    # ) %>%
+    # add_data_points() %>%
+    adjust_size(60, 50) %>%
+    add(theme(
+      plot.margin = margin(l = 10)
+    ))
+}
+
+```
+
+```{r}
+colors <- list(
+  phase = c(
+    "exp" = "red", "Exp-stat" = "orange", "stat" = "blue",
+    "timecourse" = "black"
+  ),
+  tshift = c(
+    "physiological" = "green", "shift" = "blue", "mid" = "grey"
+  ),
+  productivity = c(),
+  group = c(
+    "temperature" = "blueviolet",
+    "productivity" = "darkolivegreen4",
+    "producer" = "orange",
+    # "producer" = "darkolivegreen4",
+    "other" = "black"
+  )
+)
+
+plot_mds <- function(col) {
+  col <- rlang::enquo(col)
+  col_str <- rlang::as_name(col)
+  mds_data_dfw %>%
+    mutate(dataset_label = abbreviate(dataset, minlength = 3)) %>%
+    mutate(
+      group = case_when(
+        temperature == 1 ~ "temperature",
+        productivity == 1 ~ "productivity",
+        producer == 1 ~ "producer",
+        TRUE ~ "other"
+      )
+    ) %>%
+    tidyplot(x = V1, y = V2, color = !!col) %>%
+    add_data_points() %>%
+    adjust_colors(colors[[col_str]]) %>%
+    add_data_labels_repel(
+      label = dataset_label,
+      box.padding = 0.1
+    ) %>%
+    adjust_x_axis_title("Principal Coordinate 1") %>%
+    adjust_y_axis_title("Principal Coordinate 2") %>%
+    # adjust_size(50, 50)
+    adjust_size(NA, NA)
+}
+
+add_text <- function(p, txt, col = "red") {
+  p %>% add_annotation_text(
+    txt, Inf, Inf, color = col, hjust = 1, vjust = 1
+  ) %>%
+    remove_legend()
+}
+
+rm_x <- function(p) p %>% remove_x_axis_title() %>% remove_x_axis_labels()
+rm_y <- function(p) p %>% remove_y_axis_title() %>% remove_y_axis_labels()
+rm_xy <- function(p) p %>% rm_x() %>% rm_y()
+
+(pcoa_plot <- plot_mds(group) %>%
+  add_annotation_text(
+    "Temperature shift",
+    Inf, Inf, color = "blueviolet", hjust = 1, vjust = 1
+  ) %>%
+  add_annotation_text(
+    "Productivity",
+    Inf, Inf, color = "darkolivegreen4", hjust = 1, vjust = 2.5
+  ) %>%
+  add_annotation_text(
+    "Producer",
+    Inf, Inf, color = "orange", hjust = 1, vjust = 4
+  ) %>%
+  adjust_size(60, 50) %>%
+  # add_annotation_text(
+  #   "other",
+  #   Inf, Inf, color = "darkolivegreen4", hjust = 1, vjust = 2.5
+  # ) %>%
+  remove_legend()
+)
+```
+
+```{r}
+mds_data_dfl <- mds_data_dfw %>%
+  mutate(dataset_label = abbreviate(dataset, minlength = 3)) %>%
+  mutate(cell = case_when(cell == "CHO-S" ~ 1, TRUE ~ 0)) %>%
+  mutate(cell = factor(cell)) %>%
+  dplyr::rename(`CHO-S` = "cell") %>%
+  dplyr::rename_with(stringr::str_to_sentence, .cols = productivity:lactate) %>%
+  pivot_longer(`CHO-S`:Lactate, names_to = "factor", values_to = "binary")
+
+(pcoa_plot_all <- mds_data_dfl %>%
+  tidyplot(x = V1, y = V2, color = binary) %>%
+  add_data_points() %>%
+  # adjust_colors() %>%
+  add_data_labels_repel(
+    label = dataset_label,
+    fontsize = 6,
+    box.padding = 0.1
+  ) %>%
+  adjust_x_axis_title("Principal Coordinate 1") %>%
+  adjust_y_axis_title("Principal Coordinate 2") %>%
+  ggpubr::facet("factor") %>%
+  remove_legend() %>%
+  add(theme_tidy()) %>%
+  add(theme(
+    panel.border = element_rect()
+  )) %>%
+  # adjust_size(50, 50)
+  adjust_size(160, 150)
+)
+```
+
+# Figure
+
+```{r}
+(figure <- correlation_plot - pcoa_plot +
+  patchwork::plot_annotation(tag_levels = "a")
+)
+
+ggsave(
+  here("plots/manuscript/datasets.svg"),
+  plot = figure,
+  width = 170,
+  height = 70,
+  units = "mm"
+)
+```
+
+```{r}
+dir.create(here("results/loadings"))
+
+save(
+  correlation_res,
+  file = here("results/loadings/loadings.RData")
+)
+```
+
+```{r}
+pcoa_plot_all %>% save_plot(
+  here("plots/manuscript/supplementary/pcoa_plot_all.svg")
+)
+```

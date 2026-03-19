@@ -1,0 +1,35 @@
+project:
+  title: "Gene Variability"
+  execute-dir: "project"
+  type: "website"
+  preview:
+    port: 4200
+  render:
+    - analysis/index.qmd
+    - analysis/pca.qmd
+    - analysis/sample-entropies.qmd
+    - analysis/about.qmd
+
+toc: true
+number-sections: true
+
+website:
+  title: "Gene Variability"
+  navbar:
+    left:
+      - "analysis/index.qmd"
+      - text: "Exploration"
+        menu:
+          - analysis/pca.qmd
+      - text: "Entropies"
+        menu:
+          - analysis/sample-entropies.qmd
+      - analysis/about.qmd
+
+format:
+  html:
+    embed-resource: true
+
+knitr:
+  opts_chunk:
+    collapse: true

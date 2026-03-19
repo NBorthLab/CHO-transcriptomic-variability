@@ -1,0 +1,14 @@
+session_name: P06
+windows:
+  - window_name: nvim
+    panes:
+      - shell_command_before: "condactivate P06-base && conda activate --stack P06-r-renv"
+  - window_name: nextflow
+    panes:
+      - shell_command_before: "condactivate nextflow"
+  - window_name: git
+    panes:
+      - shell_command_before: "condactivate git"
+  - window_name: doc
+    panes:
+      - shell_command_before: "condactivate P06-r-renv"

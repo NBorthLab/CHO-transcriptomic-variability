@@ -1,0 +1,4 @@
+annotation_gtf: "resources/genome/GCF_003668045.3_CriGri-PICRH-1.0_genomic.gtf.gz"
+genome: "resources/genome/GCF_003668045.3_CriGri-PICRH-1.0_genomic.fna.gz"
+input: "resources/samplesheet.csv"
+outdir: "results"

@@ -1,0 +1,8 @@
+name: r-batchqc
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - r-essentials
+  - bioconductor-batchqc
+  - r-dt
